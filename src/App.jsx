@@ -22,13 +22,19 @@ const supabase = createClient(
 
 const fmtHours = (m) => `${(m / 60).toFixed(1)}h`;
 
+// RAWG's CDN blocks hotlinking from GitHub Pages. Route all cover images
+// through wsrv.nl (a free image proxy) which fetches server-side, resizes,
+// and caches — bypassing referrer checks entirely.
 const FALLBACK =
-  "https://images.unsplash.com/photo-1542751371-adc38448a05d?w=320&fit=crop";
-const resized = (u) =>
-  u ? u.replace("/media/games/", "/media/resize/420/-/games/") : null;
+  "https://wsrv.nl/?url=" + encodeURIComponent("https://images.unsplash.com/photo-1542751371-adc38448a05d?w=320&fit=crop") + "&w=420&h=420&fit=cover&q=80";
+
+function proxied(u) {
+  if (!u) return FALLBACK;
+  return `https://wsrv.nl/?url=${encodeURIComponent(u)}&w=420&h=300&fit=cover&a=attention&q=80`;
+}
 
 function GameImg({ src, alt = "", className }) {
-  const stages = [resized(src), src, FALLBACK].filter(Boolean);
+  const stages = [proxied(src), FALLBACK];
   const [idx, setIdx] = useState(0);
   return (
     <img src={stages[idx]} alt={alt} className={className}
