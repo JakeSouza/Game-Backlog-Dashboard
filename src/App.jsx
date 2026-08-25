@@ -1,13 +1,13 @@
 // ============================================================
-// src/App.jsx — Vite + React, deployed to GitHub Pages.
-// CYBERPUNK EDITION with IN-APP RATING SYSTEM.
-// Rate games with stars + status directly in the dashboard.
-// No backloggd dependency — ratings write to Supabase via anon key.
+// src/App.jsx — Vite + React app deployed to GitHub Pages.
+// CYBERPUNK EDITION — neon HUD aesthetic, mobile-first layout,
+// glassmorphism panels, glitch effects, bottom nav on mobile.
 //
 // Requires: react, react-router-dom, @supabase/supabase-js, recharts
+// Requires: src/index.css with cyberpunk theme (see gaming-backlog-css canvas)
 // Env: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
 // ============================================================
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { HashRouter, Routes, Route, NavLink, Link } from "react-router-dom";
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -22,6 +22,9 @@ const supabase = createClient(
 
 const fmtHours = (m) => `${(m / 60).toFixed(1)}h`;
 
+// RAWG's CDN blocks hotlinking from GitHub Pages. Route all cover images
+// through wsrv.nl (a free image proxy) which fetches server-side, resizes,
+// and caches — bypassing referrer checks entirely.
 const FALLBACK =
   "https://wsrv.nl/?url=" + encodeURIComponent("https://images.unsplash.com/photo-1542751371-adc38448a05d?w=320&fit=crop") + "&w=420&h=420&fit=cover&q=80";
 
@@ -40,49 +43,66 @@ function GameImg({ src, alt = "", className }) {
   );
 }
 
+// ----------------------------------------------------------- rating system
+// fmtScore — strip trailing zeros: 3.25, 3.5, 3.75, 4, 4.5 …
+const fmtScore = (s) => (s ? parseFloat(s.toFixed(2)).toString() : "0");
+
 const STATUSES = ["played", "playing", "backlog", "wishlist", "dropped"];
 
-// ============================================================
-// RATING SYSTEM
-// ============================================================
-
-// StarRating — 5 stars, half-star increments, click to rate
-function StarRating({ score, onRate, size = "text-sm" }) {
+// StarRating — 5 stars, quarter-star (0.25) precision by default.
+// Overlay technique: gray bg stars + cyan fg stars clipped by width.
+// Mouse/touch X position snaps to the configured precision.
+// Works on desktop (hover preview) and mobile (touch-drag).
+function StarRating({ score, onRate, size = 14, precision = 0.25 }) {
   const [hover, setHover] = useState(0);
-  const stars = [];
-  for (let i = 1; i <= 5; i++) {
-    const isFilled = (hover || score) >= i;
-    const isHalf = (hover || score) >= i - 0.5 && (hover || score) < i;
-    stars.push(
-      <span
-        key={i}
-        className={`star ${isFilled ? "filled" : isHalf ? "half" : ""}`}
-        style={{ fontSize: size === "text-lg" ? 18 : 14 }}
-        onMouseEnter={() => setHover(i)}
-        onMouseLeave={() => setHover(0)}
-        onClick={(e) => { e.stopPropagation(); onRate?.(i); }}
-      >
-        {isHalf ? "⯪" : "★"}
-      </span>
-    );
-  }
-  return <span className="star-rating" onClick={(e) => e.stopPropagation()}>{stars}</span>;
-}
+  const ref = useRef(null);
 
-// StatusBadge — colored status tag, clickable to cycle
-function StatusBadge({ status, onClick }) {
-  const cls = status ? `status-tag status-${status}` : "status-tag status-none";
+  const compute = useCallback((clientX) => {
+    if (!ref.current) return score;
+    const rect = ref.current.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const starW = rect.width / 5;
+    const idx = Math.floor(x / starW);       // 0-4
+    const frac = x / starW - idx;             // 0-1 within star
+    const snapped = Math.ceil(frac / precision) * precision;
+    const val = idx + (snapped > 0 ? snapped : precision);
+    return Math.min(5, Math.round(val / precision) * precision);
+  }, [precision, score]);
+
+  const display = hover || score;
+  const pct = (display / 5) * 100;
+  const chars = "★".repeat(5);
+
   return (
-    <span className={cls} onClick={(e) => { e.stopPropagation(); onClick?.(e); }}>
-      {status || "unrated"}
+    <span
+      className="star-rating"
+      ref={ref}
+      style={{ fontSize: size, cursor: "pointer" }}
+      onMouseMove={(e) => setHover(compute(e.clientX))}
+      onMouseLeave={() => setHover(0)}
+      onClick={(e) => { e.stopPropagation(); onRate?.(compute(e.clientX)); }}
+      onTouchStart={(e) => setHover(compute(e.touches[0].clientX))}
+      onTouchMove={(e) => { setHover(compute(e.touches[0].clientX)); e.preventDefault(); }}
+      onTouchEnd={(e) => { e.stopPropagation(); onRate?.(compute(e.changedTouches[0].clientX)); setHover(0); }}
+    >
+      <span className="star-bg-layer">{chars}</span>
+      <span className="star-fg-layer" style={{ width: `${pct}%` }}>{chars}</span>
     </span>
   );
 }
 
+// StatusBadge — colored status tag
+function StatusBadge({ status }) {
+  const cls = status ? `status-tag status-${status}` : "status-tag status-none";
+  return <span className={cls}>{status || "unrated"}</span>;
+}
+
 // RateModal — full rating UI in a modal overlay
+// Supports precision toggle (¼ star / ½ star) for fine-grained ratings.
 function RateModal({ game, currentRating, onClose, onSaved }) {
   const [score, setScore] = useState(currentRating?.score || 0);
   const [status, setStatus] = useState(currentRating?.status || "");
+  const [precision, setPrecision] = useState(0.25); // default quarter-star
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -129,10 +149,31 @@ function RateModal({ game, currentRating, onClose, onSaved }) {
         </div>
 
         <div className="mb-4">
-          <div className="text-[11px] font-mono-tech text-white/40 mb-2 uppercase tracking-wider">// Rating</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[11px] font-mono-tech text-white/40 uppercase tracking-wider">// Rating</div>
+            {/* precision toggle */}
+            <div className="flex gap-1">
+              <button
+                onClick={() => setPrecision(0.25)}
+                className={`text-[10px] font-mono-tech px-2 py-0.5 rounded border transition ${
+                  precision === 0.25
+                    ? "border-cyan-400/50 text-cyan-400 bg-cyan-400/10"
+                    : "border-white/10 text-white/30 hover:text-white/50"}`}
+              >¼★</button>
+              <button
+                onClick={() => setPrecision(0.5)}
+                className={`text-[10px] font-mono-tech px-2 py-0.5 rounded border transition ${
+                  precision === 0.5
+                    ? "border-cyan-400/50 text-cyan-400 bg-cyan-400/10"
+                    : "border-white/10 text-white/30 hover:text-white/50"}`}
+              >½★</button>
+            </div>
+          </div>
           <div className="flex items-center gap-3">
-            <StarRating score={score} onRate={setScore} size="text-lg" />
-            <span className="text-sm font-mono-tech text-cyan-400/60">{score > 0 ? `${score.toFixed(1)} / 5.0` : "not rated"}</span>
+            <StarRating score={score} onRate={setScore} size={26} precision={precision} />
+            <span className="text-sm font-mono-tech text-cyan-400/60">
+              {score > 0 ? `${fmtScore(score)} / 5.0` : "not rated"}
+            </span>
           </div>
         </div>
 
@@ -168,9 +209,7 @@ function RateModal({ game, currentRating, onClose, onSaved }) {
   );
 }
 
-// ============================================================
-// DATA HOOKS
-// ============================================================
+// ------------------------------------------------------------- data hooks
 function useLibrary(version) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -183,7 +222,8 @@ function useLibrary(version) {
         .order("playtime_forever", { ascending: false });
       const norm = (data || []).map((r) => ({
         ...r,
-        rating: r.game?.rating ?? null,
+        // PostgREST returns nested relations as arrays — unwrap to single object
+        rating: Array.isArray(r.game?.rating) ? (r.game.rating[0] || null) : (r.game?.rating ?? null),
         game: r.game ? { ...r.game, rating: undefined } : r.game,
       }));
       setRows(norm);
@@ -216,9 +256,7 @@ function useRpc(name, limit, version) {
   return rows;
 }
 
-// ============================================================
-// SYNC BUTTON
-// ============================================================
+// ----------------------------------------------------------- nav icons
 const NavIcon = ({ name }) => {
   const icons = {
     home: <path d="M3 12l9-9 9 9M5 10v10h4v-6h6v6h4V10" />,
@@ -233,6 +271,7 @@ const NavIcon = ({ name }) => {
   );
 };
 
+// ----------------------------------------------------------- sync button
 function SyncButton({ onDone, compact }) {
   const [state, setState] = useState("idle");
   const [msg, setMsg] = useState("");
@@ -271,9 +310,7 @@ function SyncButton({ onDone, compact }) {
   );
 }
 
-// ============================================================
-// SHELL
-// ============================================================
+// ------------------------------------------------------------------- shell
 function TopNav({ onSyncDone }) {
   const link = ({ isActive }) =>
     `px-3 py-2 rounded text-sm font-display font-bold uppercase tracking-wider transition ${
@@ -296,12 +333,14 @@ function BottomNav({ onSyncDone }) {
   const link = ({ isActive }) => isActive ? "active" : "";
   return (
     <>
+      {/* mobile top bar — logo + sync only */}
       <div className="md:hidden flex items-center justify-between px-4 py-2.5 border-b border-cyan-500/10 bg-[#07070d]/80 backdrop-blur-md sticky top-0 z-30">
         <Link to="/" className="text-base font-display font-black neon-text-cyan tracking-widest">
           ◈ BACKLOG<span className="neon-text-magenta">.EXE</span>
         </Link>
         <SyncButton onDone={onSyncDone} compact />
       </div>
+      {/* mobile bottom nav */}
       <nav className="bottom-nav md:hidden">
         <NavLink to="/" end className={link}><NavIcon name="home" /><span>Home</span></NavLink>
         <NavLink to="/backlog" className={link}><NavIcon name="backlog" /><span>Backlog</span></NavLink>
@@ -328,10 +367,8 @@ function Layout({ onSyncDone, children }) {
   );
 }
 
-// ============================================================
-// HOME
-// ============================================================
-function StatCard({ label, value, sub }) {
+// -------------------------------------------------------------------- Home
+function StatCard({ label, value, sub, accent }) {
   return (
     <div className="hud-card rounded-lg p-4 sm:p-5">
       <div className="hud-value text-2xl sm:text-3xl lg:text-4xl">{value}</div>
@@ -407,9 +444,7 @@ function Home({ version, onSyncDone }) {
   );
 }
 
-// ============================================================
-// BACKLOG — with inline ratings
-// ============================================================
+// --------------------------------------------------------------- Backlog
 function Backlog({ version, onSyncDone }) {
   const { rows, setRows, loading } = useLibrary(version);
   const [q, setQ] = useState("");
@@ -436,27 +471,28 @@ function Backlog({ version, onSyncDone }) {
     return r;
   }, [rows, q, genre, status, sort]);
 
-  // Optimistic update when a rating is saved
-  const onRatingSaved = useCallback(() => {
-    setRateGame(null);
-    // Refetch library data
-    (async () => {
-      const { data } = await supabase
-        .from("library_entries")
-        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,rating:ratings(score,status))")
-        .order("playtime_forever", { ascending: false });
-      const norm = (data || []).map((r) => ({
-        ...r,
-        rating: r.game?.rating ?? null,
-        game: r.game ? { ...r.game, rating: undefined } : r.game,
-      }));
-      setRows(norm);
-    })();
+  // Refetch library data after a rating is saved/cleared
+  const refetch = useCallback(async () => {
+    const { data } = await supabase
+      .from("library_entries")
+      .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,rating:ratings(score,status))")
+      .order("playtime_forever", { ascending: false });
+    const norm = (data || []).map((r) => ({
+      ...r,
+      // PostgREST returns nested relations as arrays — unwrap to single object
+      rating: Array.isArray(r.game?.rating) ? (r.game.rating[0] || null) : (r.game?.rating ?? null),
+      game: r.game ? { ...r.game, rating: undefined } : r.game,
+    }));
+    setRows(norm);
   }, [setRows]);
 
-  // Quick inline star rating (click on card)
+  const onRatingSaved = useCallback(() => {
+    setRateGame(null);
+    refetch();
+  }, [refetch]);
+
+  // Quick inline star rating (click stars on card) — quarter-star precision
   async function quickRate(gameId, newScore) {
-    // Optimistic update
     setRows((prev) => prev.map((r) =>
       r.game?.id === gameId
         ? { ...r, rating: { ...(r.rating || {}), score: newScore, status: r.rating?.status || "played" } }
@@ -476,6 +512,7 @@ function Backlog({ version, onSyncDone }) {
         <p className="font-mono-tech text-[11px] sm:text-xs text-cyan-400/40 mb-5">// {filtered.length} ENTRIES · CLICK TO RATE</p>
         <div className="scan-bar mb-5" />
 
+        {/* filters — scrollable on mobile */}
         <div className="flex gap-2 mb-5 overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
             className="cyber-input min-w-[120px] flex-shrink-0" />
@@ -516,6 +553,9 @@ function Backlog({ version, onSyncDone }) {
                   <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
                     <StarRating score={r.rating?.score || 0} onRate={(s) => quickRate(r.game.id, s)} />
                   </div>
+                  {r.rating?.score > 0 && (
+                    <div className="text-[10px] neon-text-lime mt-0.5 font-mono-tech">{fmtScore(r.rating.score)} / 5</div>
+                  )}
                 </div>
               </div>
             ))}
@@ -535,9 +575,7 @@ function Backlog({ version, onSyncDone }) {
   );
 }
 
-// ============================================================
-// RECOMMENDATIONS
-// ============================================================
+// ------------------------------------------------------ Recommendations
 function MatchBar({ score, max = 10 }) {
   const pct = Math.min(100, (Number(score) / max) * 100);
   return (
@@ -575,10 +613,9 @@ function Recommend({ version, onSyncDone }) {
         </div>
 
         {items.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-white/30 font-mono-tech text-sm mb-2">// NO RECOMMENDATIONS YET</p>
-            <p className="text-white/20 text-xs">Rate a few games in the Backlog tab to seed the genre affinity engine.</p>
-          </div>
+          <p className="text-white/30 font-mono-tech text-sm">
+            {tab === "play" ? "// RATE GAMES TO SEED RECOMMENDATIONS" : "// NO MATCHES — RATE MORE GAMES"}
+          </p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
             {items.map((r, i) => (
@@ -593,7 +630,7 @@ function Recommend({ version, onSyncDone }) {
                       {fmtHours(r.playtime_forever)} · {r.status}
                     </div>
                   ) : (
-                    <div className="text-[10px] sm:text-xs neon-text-magenta font-mono-tech mt-0.5">
+                    <div className="text-[10px] sm:text-xs text-cyan-400/40 font-mono-tech mt-0.5">
                       {new Date(r.released).toLocaleDateString()}
                     </div>
                   )}
@@ -608,9 +645,7 @@ function Recommend({ version, onSyncDone }) {
   );
 }
 
-// ============================================================
-// UPCOMING
-// ============================================================
+// ------------------------------------------------------------- Upcoming
 function Upcoming({ version, onSyncDone }) {
   const rows = useUpcoming(version);
   return (
@@ -652,9 +687,7 @@ function Upcoming({ version, onSyncDone }) {
   );
 }
 
-// ============================================================
-// APP
-// ============================================================
+// -------------------------------------------------------------------- App
 export default function App() {
   const [version, setVersion] = useState(0);
   const bump = () => setVersion((v) => v + 1);
