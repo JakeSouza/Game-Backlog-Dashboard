@@ -1,7 +1,6 @@
 // ============================================================
 // src/App.jsx — Vite + React app deployed to GitHub Pages.
-// CYBERPUNK EDITION — neon HUD aesthetic, mobile-first layout,
-// glassmorphism panels, glitch effects, bottom nav on mobile.
+// ONYX EDITION — sleek dark theme, single warm accent, mobile-first layout,
 //
 // Requires: react, react-router-dom, @supabase/supabase-js, recharts
 // Requires: src/index.css with cyberpunk theme (see gaming-backlog-css canvas)
@@ -138,8 +137,8 @@ function RateModal({ game, currentRating, onClose, onSaved }) {
         <div className="flex gap-3 mb-4">
           <GameImg src={game.cover_url} className="w-16 h-20 rounded object-cover flex-shrink-0" />
           <div className="min-w-0">
-            <div className="font-display font-bold text-sm text-white truncate">{game.title}</div>
-            {game.released && <div className="text-[11px] text-cyan-400/40 font-mono-tech">{new Date(game.released).getFullYear()}</div>}
+            <div className="font-display font-bold text-sm truncate" style={{color:'var(--text)'}}>{game.title}</div>
+            {game.released && <div className="text-[11px] font-mono-tech">{new Date(game.released).getFullYear()}</div>}
             <div className="flex flex-wrap gap-1 mt-1">
               {(game.genres || []).slice(0, 3).map((g) => (
                 <span key={g} className="genre-tag">{g}</span>
@@ -150,35 +149,33 @@ function RateModal({ game, currentRating, onClose, onSaved }) {
 
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-[11px] font-mono-tech text-white/40 uppercase tracking-wider">// Rating</div>
+            <div className="text-[11px] font-mono-tech uppercase tracking-wider" style={{color:'var(--text-muted)'}}>// Rating</div>
             {/* precision toggle */}
             <div className="flex gap-1">
               <button
                 onClick={() => setPrecision(0.25)}
                 className={`text-[10px] font-mono-tech px-2 py-0.5 rounded border transition ${
-                  precision === 0.25
-                    ? "border-cyan-400/50 text-cyan-400 bg-cyan-400/10"
-                    : "border-white/10 text-white/30 hover:text-white/50"}`}
+                  precision === 0.25 ? "" : "opacity-40 hover:opacity-70"}`}
+                style={precision === 0.25 ? {borderColor:'var(--accent-border)', color:'var(--accent)', background:'var(--accent-dim)'} : {borderColor:'var(--border)'}}
               >¼★</button>
               <button
                 onClick={() => setPrecision(0.5)}
                 className={`text-[10px] font-mono-tech px-2 py-0.5 rounded border transition ${
-                  precision === 0.5
-                    ? "border-cyan-400/50 text-cyan-400 bg-cyan-400/10"
-                    : "border-white/10 text-white/30 hover:text-white/50"}`}
+                  precision === 0.5 ? "" : "opacity-40 hover:opacity-70"}`}
+                style={precision === 0.5 ? {borderColor:'var(--accent-border)', color:'var(--accent)', background:'var(--accent-dim)'} : {borderColor:'var(--border)'}}
               >½★</button>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <StarRating score={score} onRate={setScore} size={26} precision={precision} />
-            <span className="text-sm font-mono-tech text-cyan-400/60">
+            <span className="text-sm font-mono-tech">
               {score > 0 ? `${fmtScore(score)} / 5.0` : "not rated"}
             </span>
           </div>
         </div>
 
         <div className="mb-5">
-          <div className="text-[11px] font-mono-tech text-white/40 mb-2 uppercase tracking-wider">// Status</div>
+          <div className="text-[11px] font-mono-tech mb-2 uppercase tracking-wider" style={{color:'var(--text-muted)'}}>// Status</div>
           <div className="status-selector">
             {STATUSES.map((s) => (
               <span
@@ -199,7 +196,8 @@ function RateModal({ game, currentRating, onClose, onSaved }) {
           </button>
           {currentRating && (
             <button onClick={remove} disabled={saving}
-              className="px-4 py-2.5 rounded text-sm border border-rose-500/30 text-rose-400/70 hover:bg-rose-500/10 transition font-display font-bold uppercase tracking-wider">
+              className="px-4 py-2.5 rounded text-sm border transition font-display font-bold uppercase tracking-wider"
+              style={{borderColor:'rgba(239,68,68,0.2)', color:'var(--danger)'}}>
               Clear
             </button>
           )}
@@ -256,6 +254,49 @@ function useRpc(name, limit, version) {
   return rows;
 }
 
+// Wishlist — games with status='wishlist' (from Steam sync or manual add)
+function useWishlist(version) {
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("ratings")
+        .select("score,status,game:games(id,title,cover_url,rawg_rating,genres,released)")
+        .eq("status", "wishlist")
+        .eq("user_id", "me")
+        .order("updated_at", { ascending: false });
+      setRows((data || []).map((r) => ({ ...r, game: Array.isArray(r.game) ? r.game[0] : r.game })));
+    })();
+  }, [version]);
+  return rows;
+}
+
+// Add a game to wishlist — works for games already in DB (by id) or
+// upcoming releases (creates a games row first, then the rating)
+async function addToWishlist(game) {
+  let gameId = game.id || game.game_id;
+  if (!gameId) {
+    // upcoming release — create a games row first
+    const { data, error } = await supabase.from("games").upsert({
+      title: game.title,
+      rawg_id: game.rawg_id,
+      cover_url: game.cover_url,
+      released: game.released,
+      genres: game.genres,
+      platforms: game.platforms,
+      rawg_rating: game.rawg_rating,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "rawg_id" }).select();
+    if (error || !data?.length) return false;
+    gameId = data[0].id;
+  }
+  const { error: e2 } = await supabase.from("ratings").upsert({
+    game_id: gameId, user_id: "me", score: 0, status: "wishlist",
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "game_id,user_id" });
+  return !e2;
+}
+
 // ----------------------------------------------------------- nav icons
 const NavIcon = ({ name }) => {
   const icons = {
@@ -263,6 +304,7 @@ const NavIcon = ({ name }) => {
     backlog: <path d="M4 6h16M4 12h16M4 18h7" />,
     recommend: <path d="M12 2l2.5 7H22l-6 4.5L18.5 21 12 16.5 5.5 21 8 13.5 2 9h7.5z" />,
     upcoming: <path d="M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />,
+    wishlist: <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />,
     sync: <path d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114-3l2 2M20 15a8 8 0 01-14 3l-2-2" />,
   };
   return (
@@ -293,14 +335,15 @@ function SyncButton({ onDone, compact }) {
   const label = state === "running" ? "Syncing…" : state === "done" ? "Synced ✓" : "Sync";
   const cls = `cyber-btn flex items-center gap-1.5 px-3 py-2 rounded text-xs ${
     state === "running" ? "pulse-glow" : ""} ${
-    state === "error" ? "border-rose-500 text-rose-400" : ""} ${
-    state === "done" ? "border-emerald-400 text-emerald-400" : ""}`;
+    state === "error" ? "" : ""} ${
+    state === "done" ? "" : ""}`}
+      style={state === "error" ? {borderColor:'rgba(239,68,68,0.3)', color:'var(--danger)'} : state === "done" ? {borderColor:'rgba(34,197,94,0.3)', color:'var(--success)'} : {}}
 
   return (
     <div className="flex items-center gap-2">
       {!compact && msg && (
-        <span className={`text-[11px] font-mono-tech hidden sm:inline ${
-          state === "error" ? "text-rose-400" : "text-cyan-400/60"}`}>{msg}</span>
+        <span className="text-[11px] font-mono-tech hidden sm:inline"
+          style={{color: state === "error" ? 'var(--danger)' : 'var(--text-muted)'}}>{msg}</span>
       )}
       <button onClick={run} disabled={state === "running"} className={cls}>
         <NavIcon name="sync" />
@@ -314,15 +357,16 @@ function SyncButton({ onDone, compact }) {
 function TopNav({ onSyncDone }) {
   const link = ({ isActive }) =>
     `px-3 py-2 rounded text-sm font-display font-bold uppercase tracking-wider transition ${
-      isActive ? "cyber-nav-active" : "text-white/40 hover:text-cyan-300/80"}`;
+      isActive ? "cyber-nav-active" : "hover:opacity-70"}`;
   return (
-    <nav className="hidden md:flex items-center gap-1 px-6 py-3 border-b border-cyan-500/10 bg-[#07070d]/80 backdrop-blur-md sticky top-0 z-30">
-      <Link to="/" className="mr-4 text-lg font-display font-black neon-text-cyan tracking-widest">
-        ◈ BACKLOG<span className="neon-text-magenta">.EXE</span>
+    <nav className="hidden md:flex items-center gap-1 px-6 py-3 border-b backdrop-blur-md sticky top-0 z-30" style={{borderColor:'var(--border)', background:'rgba(10,10,11,0.9)'}}>
+      <Link to="/" className="mr-4 text-lg font-display font-black tracking-widest" style={{color:'var(--accent)'}}>
+        ◈ BACKLOG<span style={{color:'var(--text-muted)'}}>.EXE</span>
       </Link>
       <NavLink to="/" end className={link}>Home</NavLink>
       <NavLink to="/backlog" className={link}>Backlog</NavLink>
       <NavLink to="/recommend" className={link}>Recommend</NavLink>
+      <NavLink to="/wishlist" className={link}>Wishlist</NavLink>
       <NavLink to="/upcoming" className={link}>Upcoming</NavLink>
       <div className="ml-auto"><SyncButton onDone={onSyncDone} /></div>
     </nav>
@@ -334,9 +378,9 @@ function BottomNav({ onSyncDone }) {
   return (
     <>
       {/* mobile top bar — logo + sync only */}
-      <div className="md:hidden flex items-center justify-between px-4 py-2.5 border-b border-cyan-500/10 bg-[#07070d]/80 backdrop-blur-md sticky top-0 z-30">
-        <Link to="/" className="text-base font-display font-black neon-text-cyan tracking-widest">
-          ◈ BACKLOG<span className="neon-text-magenta">.EXE</span>
+      <div className="md:hidden flex items-center justify-between px-4 py-2.5 border-b backdrop-blur-md sticky top-0 z-30" style={{borderColor:'var(--border)', background:'rgba(10,10,11,0.9)'}}>
+        <Link to="/" className="text-base font-display font-black tracking-widest" style={{color:'var(--accent)'}}>
+          ◈ BACKLOG<span style={{color:'var(--text-muted)'}}>.EXE</span>
         </Link>
         <SyncButton onDone={onSyncDone} compact />
       </div>
@@ -345,6 +389,7 @@ function BottomNav({ onSyncDone }) {
         <NavLink to="/" end className={link}><NavIcon name="home" /><span>Home</span></NavLink>
         <NavLink to="/backlog" className={link}><NavIcon name="backlog" /><span>Backlog</span></NavLink>
         <NavLink to="/recommend" className={link}><NavIcon name="recommend" /><span>Recs</span></NavLink>
+        <NavLink to="/wishlist" className={link}><NavIcon name="wishlist" /><span>Wish</span></NavLink>
         <NavLink to="/upcoming" className={link}><NavIcon name="upcoming" /><span>Soon</span></NavLink>
       </nav>
     </>
@@ -353,13 +398,13 @@ function BottomNav({ onSyncDone }) {
 
 function Layout({ onSyncDone, children }) {
   return (
-    <div className="min-h-screen text-white/90 font-body relative">
+    <div className="min-h-screen font-body relative">
       <div className="cyber-bg" />
       <div className="relative z-10">
         <TopNav onSyncDone={onSyncDone} />
         <BottomNav onSyncDone={onSyncDone} />
         <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 pb-24 md:pb-8">{children}</main>
-        <footer className="hidden md:block text-center text-[11px] font-mono-tech text-white/15 py-6">
+        <footer className="hidden md:block text-center text-[11px] font-mono-tech py-6" style={{color:'var(--text-dim)'}}>
           // LIVE_DATA :: SUPABASE :: EDGE_FUNCTION :: sync-games //
         </footer>
       </div>
@@ -372,8 +417,8 @@ function StatCard({ label, value, sub, accent }) {
   return (
     <div className="hud-card rounded-lg p-4 sm:p-5">
       <div className="hud-value text-2xl sm:text-3xl lg:text-4xl">{value}</div>
-      <div className="text-xs sm:text-sm text-white/40 mt-1 font-display font-bold uppercase tracking-wider">{label}</div>
-      {sub && <div className="text-[10px] sm:text-xs text-white/25 mt-0.5 font-mono-tech">{sub}</div>}
+      <div className="text-xs sm:text-sm mt-1 font-display font-bold uppercase tracking-wider" style={{color:'var(--text-muted)'}}>{label}</div>
+      {sub && <div className="text-[10px] sm:text-xs mt-0.5 font-mono-tech" style={{color:'var(--text-dim)'}}>{sub}</div>}
     </div>
   );
 }
@@ -393,15 +438,15 @@ function Home({ version, onSyncDone }) {
     return { total, played, hours: hours.toFixed(0), avg, genres };
   }, [rows]);
 
-  if (loading) return <Layout onSyncDone={onSyncDone}><p className="text-cyan-400/40 font-mono-tech text-sm">// LOADING_DATA…</p></Layout>;
+  if (loading) return <Layout onSyncDone={onSyncDone}><p className="font-mono-tech text-sm" style={{color:'var(--text-muted)'}}>Loading…</p></Layout>;
 
-  const COLORS = ["#00f0ff", "#ff2a6d", "#b026ff", "#05ffa1", "#f9f002", "#ff6b1a", "#1a8fff", "#ff1ade"];
+  const COLORS = ["#f97316", "#a78bfa", "#22c55e", "#eab308", "#ef4444", "#60a5fa", "#e4e4e7", "#71717a"];
 
   return (
     <Layout onSyncDone={onSyncDone}>
       <div className="fade-in">
-        <h1 className="glitch text-xl sm:text-2xl lg:text-3xl font-display font-black mb-1 text-white" data-text="YOUR BACKLOG">YOUR BACKLOG</h1>
-        <p className="font-mono-tech text-[11px] sm:text-xs text-cyan-400/40 mb-5">// SYSTEM_STATUS: ONLINE</p>
+        <h1 className="text-xl sm:text-2xl lg:text-3xl font-display font-black mb-1" style={{color:'var(--text)'}}>YOUR BACKLOG</h1>
+        <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>system status: online</p>
         <div className="scan-bar mb-6" />
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
@@ -413,7 +458,7 @@ function Home({ version, onSyncDone }) {
 
         <div className="grid md:grid-cols-2 gap-4">
           <div className="cyber-panel rounded-lg p-4 sm:p-5">
-            <h2 className="font-display font-bold text-sm uppercase tracking-wider neon-text-cyan mb-3">// Genre Distribution</h2>
+            <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>Genre Distribution</h2>
             {stats.genres.length ? (
               <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
@@ -424,16 +469,16 @@ function Home({ version, onSyncDone }) {
                   <Tooltip />
                 </PieChart>
               </ResponsiveContainer>
-            ) : <p className="text-white/30 text-sm font-mono-tech">// NO_DATA — run sync</p>}
+            ) : <p className="text-sm font-mono-tech" style={{color:'var(--text-muted)'}}>No data — run sync</p>}
           </div>
           <div className="cyber-panel rounded-lg p-4 sm:p-5">
-            <h2 className="font-display font-bold text-sm uppercase tracking-wider neon-text-magenta mb-3">// Most Played</h2>
+            <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>Most Played</h2>
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={rows.slice(0, 6).map((r) => ({ name: r.game?.title?.slice(0, 12), hours: +(r.playtime_forever / 60).toFixed(1) }))} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,240,255,0.06)" />
                 <XAxis type="number" stroke="rgba(0,240,255,0.3)" tick={{ fontFamily: 'Share Tech Mono', fontSize: 10 }} />
                 <YAxis type="category" dataKey="name" stroke="rgba(0,240,255,0.3)" width={80} tick={{ fontFamily: 'Share Tech Mono', fontSize: 10 }} />
-                <Bar dataKey="hours" fill="#00f0ff" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="hours" fill="#f97316" radius={[0, 4, 4, 0]} />
                 <Tooltip />
               </BarChart>
             </ResponsiveContainer>
@@ -508,8 +553,8 @@ function Backlog({ version, onSyncDone }) {
   return (
     <Layout onSyncDone={onSyncDone}>
       <div className="fade-in">
-        <h1 className="glitch text-xl sm:text-2xl font-display font-black mb-1 text-white" data-text="BACKLOG">BACKLOG</h1>
-        <p className="font-mono-tech text-[11px] sm:text-xs text-cyan-400/40 mb-5">// {filtered.length} ENTRIES · CLICK TO RATE</p>
+        <h1 className="text-xl sm:text-2xl font-display font-black mb-1" style={{color:'var(--text)'}}>BACKLOG</h1>
+        <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>{filtered.length} entries · click to rate</p>
         <div className="scan-bar mb-5" />
 
         {/* filters — scrollable on mobile */}
@@ -529,7 +574,7 @@ function Backlog({ version, onSyncDone }) {
           </select>
         </div>
 
-        {loading ? <p className="text-cyan-400/40 font-mono-tech text-sm">// LOADING…</p> : (
+        {loading ? <p className="font-mono-tech text-sm" style={{color:'var(--text-muted)'}}>Loading…</p> : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
             {filtered.map((r) => (
               <div key={r.game.id} className="game-card rounded-lg overflow-hidden cursor-pointer"
@@ -543,8 +588,8 @@ function Backlog({ version, onSyncDone }) {
                   )}
                 </div>
                 <div className="p-2 sm:p-3">
-                  <div className="text-xs sm:text-sm font-display font-bold truncate text-white/90">{r.game.title}</div>
-                  <div className="text-[10px] sm:text-xs text-cyan-400/40 font-mono-tech mt-0.5">{fmtHours(r.playtime_forever || 0)}</div>
+                  <div className="text-xs sm:text-sm font-display font-bold truncate">{r.game.title}</div>
+                  <div className="text-[10px] sm:text-xs font-mono-tech mt-0.5">{fmtHours(r.playtime_forever || 0)}</div>
                   <div className="flex flex-wrap gap-1 mt-1.5">
                     {(r.game.genres || []).slice(0, 2).map((g) => (
                       <span key={g} className="genre-tag">{g}</span>
@@ -554,7 +599,7 @@ function Backlog({ version, onSyncDone }) {
                     <StarRating score={r.rating?.score || 0} onRate={(s) => quickRate(r.game.id, s)} />
                   </div>
                   {r.rating?.score > 0 && (
-                    <div className="text-[10px] neon-text-lime mt-0.5 font-mono-tech">{fmtScore(r.rating.score)} / 5</div>
+                    <div className="text-[10px] mt-0.5 font-mono-tech" style={{color:'var(--success)'}}>{fmtScore(r.rating.score)} / 5</div>
                   )}
                 </div>
               </div>
@@ -581,8 +626,8 @@ function MatchBar({ score, max = 10 }) {
   return (
     <div className="mt-1.5">
       <div className="flex justify-between items-center mb-0.5">
-        <span className="text-[10px] font-mono-tech text-white/30">MATCH</span>
-        <span className="text-[10px] font-mono-tech neon-text-cyan">{Number(score).toFixed(2)}</span>
+        <span className="text-[10px] font-mono-tech">MATCH</span>
+        <span className="text-[10px] font-mono-tech" style={{color:'var(--accent)'}}>{Number(score).toFixed(2)}</span>
       </div>
       <div className="match-bar"><div className="match-bar-fill" style={{ width: `${pct}%` }} /></div>
     </div>
@@ -593,51 +638,75 @@ function Recommend({ version, onSyncDone }) {
   const playNext = useRpc("recommend_play_next", 12, version);
   const discover = useRpc("recommend_discover", 12, version);
   const [tab, setTab] = useState("play");
+  const [added, setAdded] = useState({});
+  const [wlVersion, setWlVersion] = useState(0);
+  const wishlist = useWishlist(wlVersion);
+  const wishlistedIds = useMemo(() => new Set(wishlist.map((w) => w.game?.id).filter(Boolean)), [wishlist]);
   const items = tab === "play" ? playNext : discover;
+
+  async function handleAdd(r) {
+    const gid = r.game_id || r.id;
+    setAdded((p) => ({ ...p, [gid]: true }));
+    await addToWishlist({ ...r, id: gid });
+    setWlVersion((v) => v + 1);
+  }
 
   return (
     <Layout onSyncDone={onSyncDone}>
       <div className="fade-in">
-        <h1 className="glitch text-xl sm:text-2xl font-display font-black mb-1 text-white" data-text="RECOMMEND">RECOMMEND</h1>
-        <p className="font-mono-tech text-[11px] sm:text-xs text-cyan-400/40 mb-5">// AI_MATCH :: GENRE_AFFINITY_ENGINE</p>
+        <h1 className="text-xl sm:text-2xl font-display font-black mb-1" style={{color:'var(--text)'}}>RECOMMEND</h1>
+        <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>genre affinity engine</p>
         <div className="scan-bar mb-5" />
 
         <div className="flex gap-2 mb-5">
           {[["play", "Play Next"], ["discover", "Discover"]].map(([t, label]) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-2 rounded text-sm font-display font-bold uppercase tracking-wider transition ${
-                tab === t ? "cyber-nav-active" : "border border-white/10 text-white/40 hover:text-cyan-300/70"}`}>
+                tab === t ? "cyber-nav-active" : "border hover:opacity-70"}`}
+              style={tab === t ? {} : {color:'var(--text-muted)'}}>
               {label}
             </button>
           ))}
         </div>
 
         {items.length === 0 ? (
-          <p className="text-white/30 font-mono-tech text-sm">
-            {tab === "play" ? "// RATE GAMES TO SEED RECOMMENDATIONS" : "// NO MATCHES — RATE MORE GAMES"}
+          <p className="font-mono-tech text-sm" style={{color:'var(--text-muted)'}}>
+            {tab === "play" ? "Rate games to seed recommendations" : "No matches — rate more games"}
           </p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
-            {items.map((r, i) => (
-              <div key={tab === "play" ? r.game_id : i} className="game-card rounded-lg overflow-hidden">
-                <div className="card-img-wrap">
-                  <GameImg src={r.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+            {items.map((r, i) => {
+              const gid = r.game_id || r.id;
+              const isWishlisted = tab === "discover" && (added[gid] || wishlistedIds.has(gid));
+              return (
+                <div key={tab === "play" ? r.game_id : i} className="game-card rounded-lg overflow-hidden">
+                  <div className="card-img-wrap">
+                    <GameImg src={r.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+                  </div>
+                  <div className="p-2 sm:p-3">
+                    <div className="text-xs sm:text-sm font-display font-bold truncate" style={{color:'var(--text)'}}>{r.title}</div>
+                    {tab === "play" ? (
+                      <div className="text-[10px] sm:text-xs font-mono-tech mt-0.5" style={{color:'var(--text-muted)'}}>
+                        {fmtHours(r.playtime_forever)} · {r.status}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] sm:text-xs font-mono-tech mt-0.5" style={{color:'var(--text-muted)'}}>
+                        {r.released ? new Date(r.released).toLocaleDateString() : ''}
+                      </div>
+                    )}
+                    <MatchBar score={r.score} />
+                    {tab === "discover" && (
+                      <button
+                        onClick={() => !isWishlisted && handleAdd(r)}
+                        className={`wishlist-add-btn mt-1.5 ${isWishlisted ? 'added' : ''}`}
+                      >
+                        {isWishlisted ? '✓ Wishlisted' : '+ Wishlist'}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="p-2 sm:p-3">
-                  <div className="text-xs sm:text-sm font-display font-bold truncate text-white/90">{r.title}</div>
-                  {tab === "play" ? (
-                    <div className="text-[10px] sm:text-xs text-cyan-400/40 font-mono-tech mt-0.5">
-                      {fmtHours(r.playtime_forever)} · {r.status}
-                    </div>
-                  ) : (
-                    <div className="text-[10px] sm:text-xs text-cyan-400/40 font-mono-tech mt-0.5">
-                      {new Date(r.released).toLocaleDateString()}
-                    </div>
-                  )}
-                  <MatchBar score={r.score} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -648,35 +717,136 @@ function Recommend({ version, onSyncDone }) {
 // ------------------------------------------------------------- Upcoming
 function Upcoming({ version, onSyncDone }) {
   const rows = useUpcoming(version);
+  const [added, setAdded] = useState({});
+  const [wlVersion, setWlVersion] = useState(0);
+  const wishlist = useWishlist(wlVersion);
+
+  const wishlistedIds = useMemo(() => new Set(wishlist.map((w) => w.game?.id).filter(Boolean)), [wishlist]);
+
+  async function handleAdd(r) {
+    setAdded((p) => ({ ...p, [r.id]: true }));
+    await addToWishlist(r);
+    setWlVersion((v) => v + 1);
+  }
+
   return (
     <Layout onSyncDone={onSyncDone}>
       <div className="fade-in">
-        <h1 className="glitch text-xl sm:text-2xl font-display font-black mb-1 text-white" data-text="UPCOMING">UPCOMING</h1>
-        <p className="font-mono-tech text-[11px] sm:text-xs text-cyan-400/40 mb-5">// {rows.length} RELEASES QUEUED</p>
+        <h1 className="text-xl sm:text-2xl font-display font-black mb-1" style={{color:'var(--text)'}}>UPCOMING</h1>
+        <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>{rows.length} releases queued · click + to add to wishlist</p>
         <div className="scan-bar mb-5" />
 
         {rows.length === 0 ? (
-          <p className="text-white/30 font-mono-tech text-sm">// NO DATA — RUN SYNC</p>
+          <p className="font-mono-tech text-sm" style={{color:'var(--text-muted)'}}>No data — run sync</p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
-            {rows.map((r) => (
-              <div key={r.id} className="game-card rounded-lg overflow-hidden">
+            {rows.map((r) => {
+              const isWishlisted = added[r.id] || wishlistedIds.has(r.rawg_id);
+              return (
+                <div key={r.id} className="game-card rounded-lg overflow-hidden">
+                  <div className="card-img-wrap">
+                    <GameImg src={r.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+                  </div>
+                  <div className="p-2 sm:p-3">
+                    <div className="text-xs sm:text-sm font-display font-bold truncate" style={{color:'var(--text)'}}>{r.title}</div>
+                    <div className="text-[10px] sm:text-xs font-mono-tech mt-0.5" style={{color:'var(--accent)'}}>
+                      {new Date(r.released).toLocaleDateString()}
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {(r.genres || []).slice(0, 2).map((g) => (
+                        <span key={g} className="genre-tag">{g}</span>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between mt-1.5">
+                      {r.rawg_rating && (
+                        <div className="text-xs font-mono-tech" style={{color:'var(--success)'}}>★ {r.rawg_rating}</div>
+                      )}
+                      <button
+                        onClick={() => !isWishlisted && handleAdd(r)}
+                        className={`wishlist-add-btn ${isWishlisted ? 'added' : ''}`}
+                        style={{ marginLeft: 'auto' }}
+                      >
+                        {isWishlisted ? '✓ Wishlisted' : '+ Wishlist'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Layout>
+  );
+}
+
+// ------------------------------------------------------------- Wishlist
+function Wishlist({ version, onSyncDone }) {
+  const rows = useWishlist(version);
+  const [q, setQ] = useState("");
+
+  const filtered = useMemo(() => {
+    let r = rows.filter((x) => x.game);
+    if (q) r = r.filter((x) => x.game.title.toLowerCase().includes(q.toLowerCase()));
+    return r;
+  }, [rows, q]);
+
+  async function removeWishlist(gameId) {
+    await supabase.from("ratings").delete().eq("game_id", gameId).eq("user_id", "me");
+  }
+
+  return (
+    <Layout onSyncDone={onSyncDone}>
+      <div className="fade-in">
+        <h1 className="text-xl sm:text-2xl font-display font-black mb-1" style={{color:'var(--text)'}}>WISHLIST</h1>
+        <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>
+          {filtered.length} games · synced from Steam + manually added
+        </p>
+        <div className="scan-bar mb-5" />
+
+        <div className="flex gap-2 mb-5">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
+            className="cyber-input" />
+        </div>
+
+        {filtered.length === 0 ? (
+          <p className="font-mono-tech text-sm" style={{color:'var(--text-muted)'}}>
+            {rows.length === 0 ? "No wishlisted games — run sync or add from Upcoming/Discover" : "No matches"}
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+            {filtered.map((r) => (
+              <div key={r.game.id} className="game-card rounded-lg overflow-hidden">
                 <div className="card-img-wrap">
-                  <GameImg src={r.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+                  <GameImg src={r.game.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+                  <div className="absolute top-1.5 right-1.5 z-10">
+                    <StatusBadge status="wishlist" />
+                  </div>
                 </div>
                 <div className="p-2 sm:p-3">
-                  <div className="text-xs sm:text-sm font-display font-bold truncate text-white/90">{r.title}</div>
-                  <div className="text-[10px] sm:text-xs neon-text-magenta font-mono-tech mt-0.5">
-                    {new Date(r.released).toLocaleDateString()}
+                  <div className="text-xs sm:text-sm font-display font-bold truncate" style={{color:'var(--text)'}}>
+                    {r.game.title}
                   </div>
+                  {r.game.released && (
+                    <div className="text-[10px] font-mono-tech mt-0.5" style={{color:'var(--text-muted)'}}>
+                      {new Date(r.game.released).toLocaleDateString()}
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-1 mt-1.5">
-                    {(r.genres || []).slice(0, 2).map((g) => (
+                    {(r.game.genres || []).slice(0, 2).map((g) => (
                       <span key={g} className="genre-tag">{g}</span>
                     ))}
                   </div>
-                  {r.rawg_rating && (
-                    <div className="text-xs neon-text-lime mt-1 font-mono-tech">★ {r.rawg_rating}</div>
+                  {r.game.rawg_rating && (
+                    <div className="text-xs font-mono-tech mt-1" style={{color:'var(--success)'}}>★ {r.game.rawg_rating}</div>
                   )}
+                  <button
+                    onClick={() => removeWishlist(r.game.id)}
+                    className="wishlist-add-btn mt-1.5"
+                    style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.15)' }}
+                  >
+                    Remove
+                  </button>
                 </div>
               </div>
             ))}
@@ -697,6 +867,7 @@ export default function App() {
         <Route path="/" element={<Home version={version} onSyncDone={bump} />} />
         <Route path="/backlog" element={<Backlog version={version} onSyncDone={bump} />} />
         <Route path="/recommend" element={<Recommend version={version} onSyncDone={bump} />} />
+        <Route path="/wishlist" element={<Wishlist version={version} onSyncDone={bump} />} />
         <Route path="/upcoming" element={<Upcoming version={version} onSyncDone={bump} />} />
       </Routes>
     </HashRouter>
