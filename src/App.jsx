@@ -336,8 +336,7 @@ function SyncButton({ onDone, compact }) {
   const cls = `cyber-btn flex items-center gap-1.5 px-3 py-2 rounded text-xs ${
     state === "running" ? "pulse-glow" : ""} ${
     state === "error" ? "" : ""} ${
-    state === "done" ? "" : ""}`}
-      style={state === "error" ? {borderColor:'rgba(239,68,68,0.3)', color:'var(--danger)'} : state === "done" ? {borderColor:'rgba(34,197,94,0.3)', color:'var(--success)'} : {}}
+    state === "done" ? "" : ""}`;
 
   return (
     <div className="flex items-center gap-2">
@@ -345,7 +344,8 @@ function SyncButton({ onDone, compact }) {
         <span className="text-[11px] font-mono-tech hidden sm:inline"
           style={{color: state === "error" ? 'var(--danger)' : 'var(--text-muted)'}}>{msg}</span>
       )}
-      <button onClick={run} disabled={state === "running"} className={cls}>
+      <button onClick={run} disabled={state === "running"} className={cls}
+        style={state === "error" ? {borderColor:'rgba(239,68,68,0.3)', color:'var(--danger)'} : state === "done" ? {borderColor:'rgba(34,197,94,0.3)', color:'var(--success)'} : {}}>
         <NavIcon name="sync" />
         <span className="uppercase tracking-wider">{label}</span>
       </button>
