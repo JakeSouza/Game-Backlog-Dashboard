@@ -42,21 +42,25 @@ function json(body: unknown, status = 200) {
 }
 
 // ----------------------------------------------------------------- Steam
-async function steamWishlist() {
+// Returns { items, status, error } so the caller can surface diagnostics.
+async function steamWishlist(): Promise<{ items: { appid: number; title: string }[]; status: string; error: string }> {
   const steamId = Deno.env.get("STEAM_ID")!;
   const key = Deno.env.get("STEAM_API_KEY")!;
   const out: { appid: number; title: string }[] = [];
 
   // Approach 1: legacy wishlistdata (rich JSON in one call)
+  // DEPRECATED Nov 2024 — now redirects to store HTML. We still try it
+  // in case it comes back or works from certain IPs.
   try {
     const r = await fetch(
-      `https://store.steampowered.com/wishlist/profiles/${steamId}/wishlistdata/`,
-      { headers: {
+      `https://store.steampowered.com/wishlist/profiles/${steamId}/wishlistdata/?p=0`,
+      { redirect: "manual", headers: {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept": "application/json,text/html",
         "Accept-Language": "en-US,en;q=0.9",
       } },
     );
+    // 200 + JSON body = success; 3xx = redirect (deprecated); anything else = fail
     if (r.ok) {
       const text = await r.text();
       if (text.trim().startsWith("{")) {
@@ -64,19 +68,27 @@ async function steamWishlist() {
         for (const [appid, g] of Object.entries(data)) {
           if ((g as any).subs?.length > 0) out.push({ appid: Number(appid), title: (g as any).name });
         }
-        if (out.length) return out;
+        if (out.length) return { items: out, status: "wishlistdata", error: "" };
       }
     }
-  } catch { /* fall through */ }
+  } catch { /* fall through to approach 2 */ }
 
-  // Approach 2: IWishlistService + appdetails for names
+  // Approach 2: IWishlistService/GetWishlist (official API, returns appids only)
+  // Then call store/appdetails for each title (capped, with delay).
   try {
     const u = new URL("https://api.steampowered.com/IWishlistService/GetWishlist/v1/");
     u.searchParams.set("key", key);
     u.searchParams.set("steamid", steamId);
     const r = await fetch(u);
-    if (!r.ok) return out;
-    const items = (await r.json()).response?.wishlist || [];
+    if (!r.ok) {
+      const body = await r.text().catch(() => "");
+      return { items: [], status: "error", error: `IWishlistService HTTP ${r.status}: ${body.slice(0, 200)}` };
+    }
+    const json = await r.json();
+    const items = json?.response?.wishlist || [];
+    if (!items.length) {
+      return { items: [], status: "empty", error: "IWishlistService returned 0 items (wishlist may be private or empty)" };
+    }
     for (const item of items.slice(0, 50)) {
       if (!item.appid) continue;
       let title = `Steam App ${item.appid}`;
@@ -87,11 +99,13 @@ async function steamWishlist() {
           const ad = (await ar.json())[String(item.appid)];
           if (ad?.success && ad?.data?.name) title = ad.data.name;
         }
-      } catch { /* placeholder */ }
+      } catch { /* keep placeholder title */ }
       out.push({ appid: item.appid, title });
     }
-  } catch { /* empty */ }
-  return out;
+    return { items: out, status: "IWishlistService", error: "" };
+  } catch (e) {
+    return { items: [], status: "error", error: `steamWishlist exception: ${String(e?.message || e)}` };
+  }
 }
 
 async function steamLibrary() {
@@ -319,9 +333,13 @@ Deno.serve(async (req) => {
 
     // ---- Steam Wishlist ----
     let wishlistSynced = 0;
+    let wishlistStatus = "skipped";
+    let wishlistError = "";
     try {
-      const wl = await steamWishlist();
-      for (const w of wl) {
+      const wlResult = await steamWishlist();
+      wishlistStatus = wlResult.status;
+      wishlistError = wlResult.error;
+      for (const w of wlResult.items) {
         // create games row if not exists (by steam_appid)
         let gid: string | undefined;
         const ex = await fetch(REST(`games?steam_appid=eq.${w.appid}&select=id`), { headers: h() });
@@ -344,7 +362,10 @@ Deno.serve(async (req) => {
           wishlistSynced++;
         }
       }
-    } catch (e) { /* non-fatal */ }
+    } catch (e) {
+      wishlistStatus = "error";
+      wishlistError = String(e?.message || e);
+    }
 
     return json({
       ok: true,
@@ -354,6 +375,8 @@ Deno.serve(async (req) => {
       enriched,
       ratingsUpserted,
       wishlistSynced,
+      wishlistStatus,
+      wishlistError,
       backloggdEntries: bl.length,
       backloggdOnly: blOnly,
       upcoming: upcoming.length,

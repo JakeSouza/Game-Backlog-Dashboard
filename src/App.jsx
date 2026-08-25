@@ -328,7 +328,10 @@ function SyncButton({ onDone, compact }) {
       return;
     }
     setState("done");
-    setMsg(`${data.steamGames ?? 0} games · ${data.enriched ?? 0} enriched · ${((data.ms ?? 0) / 1000).toFixed(1)}s`);
+    const wlInfo = data.wishlistSynced != null ? ` · ${data.wishlistSynced} wishlist` : "";
+    const wlErr = data.wishlistStatus === "error" || data.wishlistStatus === "empty"
+      ? ` [WL: ${data.wishlistError || data.wishlistStatus}]` : "";
+    setMsg(`${data.steamGames ?? 0} games · ${data.enriched ?? 0} enriched${wlInfo} · ${((data.ms ?? 0) / 1000).toFixed(1)}s${wlErr}`);
     onDone?.();
   }
 
