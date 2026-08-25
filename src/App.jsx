@@ -22,8 +22,27 @@ const supabase = createClient(
 );
 
 const fmtHours = (m) => `${(m / 60).toFixed(1)}h`;
-const COVER = (u) =>
-  u || "https://images.unsplash.com/photo-1542751371-adc38448a05d?w=320&fit=crop";
+
+// RAWG hands back full-res screenshots (often 2–5MB each). Use their
+// resize endpoint for small, fast covers, then fall back to the original
+// URL, then a generic placeholder if both fail.
+const FALLBACK =
+  "https://images.unsplash.com/photo-1542751371-adc38448a05d?w=320&fit=crop";
+const resized = (u) =>
+  u ? u.replace("/media/games/", "/media/resize/420/-/games/") : null;
+
+function GameImg({ src, alt = "", className }) {
+  const stages = [resized(src), src, FALLBACK].filter(Boolean);
+  const [idx, setIdx] = useState(0);
+  return (
+    <img
+      src={stages[idx]}
+      alt={alt}
+      className={className}
+      onError={() => setIdx((i) => Math.min(i + 1, stages.length - 1))}
+    />
+  );
+}
 
 // ------------------------------------------------------------- data hooks
 function useLibrary(version) {
@@ -34,9 +53,17 @@ function useLibrary(version) {
       setLoading(true);
       const { data } = await supabase
         .from("library_entries")
-        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released),rating:ratings(score,status)")
+        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,rating:ratings(score,status))")
         .order("playtime_forever", { ascending: false });
-      setRows(data || []);
+      // ratings joins on games, not library_entries, so PostgREST can't
+      // embed it directly. Nest it under game and flatten to r.rating so the
+      // rest of the app keeps using r.rating?.score / r.rating?.status.
+      const norm = (data || []).map((r) => ({
+        ...r,
+        rating: r.game?.rating ?? null,
+        game: r.game ? { ...r.game, rating: undefined } : r.game,
+      }));
+      setRows(norm);
       setLoading(false);
     })();
   }, [version]);
@@ -260,7 +287,7 @@ function Backlog({ version, onSyncDone }) {
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {filtered.map((r) => (
             <div key={r.game.id} className="bg-slate-900 rounded-xl overflow-hidden border border-slate-800">
-              <img src={COVER(r.game.cover_url)} alt="" className="w-full h-32 object-cover" />
+              <GameImg src={r.game.cover_url} className="w-full h-32 object-cover" />
               <div className="p-2">
                 <div className="text-sm font-medium truncate">{r.game.title}</div>
                 <div className="text-xs text-slate-500">{fmtHours(r.playtime_forever || 0)} played</div>
@@ -305,7 +332,7 @@ function Recommend({ version, onSyncDone }) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {playNext.map((r) => (
             <div key={r.game_id} className="bg-slate-900 rounded-xl overflow-hidden border border-slate-800">
-              <img src={COVER(r.cover_url)} alt="" className="w-full h-32 object-cover" />
+              <GameImg src={r.cover_url} className="w-full h-32 object-cover" />
               <div className="p-2">
                 <div className="text-sm font-medium truncate">{r.title}</div>
                 <div className="text-xs text-slate-500">{fmtHours(r.playtime_forever)} · {r.status}</div>
@@ -319,7 +346,7 @@ function Recommend({ version, onSyncDone }) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {discover.map((r, i) => (
             <div key={i} className="bg-slate-900 rounded-xl overflow-hidden border border-slate-800">
-              <img src={COVER(r.cover_url)} alt="" className="w-full h-32 object-cover" />
+              <GameImg src={r.cover_url} className="w-full h-32 object-cover" />
               <div className="p-2">
                 <div className="text-sm font-medium truncate">{r.title}</div>
                 <div className="text-xs text-slate-500">{new Date(r.released).toLocaleDateString()}</div>
@@ -343,7 +370,7 @@ function Upcoming({ version, onSyncDone }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {rows.map((r) => (
           <div key={r.id} className="bg-slate-900 rounded-xl overflow-hidden border border-slate-800">
-            <img src={COVER(r.cover_url)} alt="" className="w-full h-32 object-cover" />
+            <GameImg src={r.cover_url} className="w-full h-32 object-cover" />
             <div className="p-2">
               <div className="text-sm font-medium truncate">{r.title}</div>
               <div className="text-xs text-slate-500">{new Date(r.released).toLocaleDateString()}</div>
