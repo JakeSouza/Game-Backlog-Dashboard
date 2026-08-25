@@ -1,13 +1,13 @@
 // ============================================================
-// src/App.jsx — Vite + React app deployed to GitHub Pages.
-// CYBERPUNK EDITION — neon HUD aesthetic, mobile-first layout,
-// glassmorphism panels, glitch effects, bottom nav on mobile.
+// src/App.jsx — Vite + React, deployed to GitHub Pages.
+// CYBERPUNK EDITION with IN-APP RATING SYSTEM.
+// Rate games with stars + status directly in the dashboard.
+// No backloggd dependency — ratings write to Supabase via anon key.
 //
 // Requires: react, react-router-dom, @supabase/supabase-js, recharts
-// Requires: src/index.css with cyberpunk theme (see gaming-backlog-css canvas)
 // Env: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
 // ============================================================
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { HashRouter, Routes, Route, NavLink, Link } from "react-router-dom";
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -22,9 +22,6 @@ const supabase = createClient(
 
 const fmtHours = (m) => `${(m / 60).toFixed(1)}h`;
 
-// RAWG's CDN blocks hotlinking from GitHub Pages. Route all cover images
-// through wsrv.nl (a free image proxy) which fetches server-side, resizes,
-// and caches — bypassing referrer checks entirely.
 const FALLBACK =
   "https://wsrv.nl/?url=" + encodeURIComponent("https://images.unsplash.com/photo-1542751371-adc38448a05d?w=320&fit=crop") + "&w=420&h=420&fit=cover&q=80";
 
@@ -43,7 +40,137 @@ function GameImg({ src, alt = "", className }) {
   );
 }
 
-// ------------------------------------------------------------- data hooks
+const STATUSES = ["played", "playing", "backlog", "wishlist", "dropped"];
+
+// ============================================================
+// RATING SYSTEM
+// ============================================================
+
+// StarRating — 5 stars, half-star increments, click to rate
+function StarRating({ score, onRate, size = "text-sm" }) {
+  const [hover, setHover] = useState(0);
+  const stars = [];
+  for (let i = 1; i <= 5; i++) {
+    const isFilled = (hover || score) >= i;
+    const isHalf = (hover || score) >= i - 0.5 && (hover || score) < i;
+    stars.push(
+      <span
+        key={i}
+        className={`star ${isFilled ? "filled" : isHalf ? "half" : ""}`}
+        style={{ fontSize: size === "text-lg" ? 18 : 14 }}
+        onMouseEnter={() => setHover(i)}
+        onMouseLeave={() => setHover(0)}
+        onClick={(e) => { e.stopPropagation(); onRate?.(i); }}
+      >
+        {isHalf ? "⯪" : "★"}
+      </span>
+    );
+  }
+  return <span className="star-rating" onClick={(e) => e.stopPropagation()}>{stars}</span>;
+}
+
+// StatusBadge — colored status tag, clickable to cycle
+function StatusBadge({ status, onClick }) {
+  const cls = status ? `status-tag status-${status}` : "status-tag status-none";
+  return (
+    <span className={cls} onClick={(e) => { e.stopPropagation(); onClick?.(e); }}>
+      {status || "unrated"}
+    </span>
+  );
+}
+
+// RateModal — full rating UI in a modal overlay
+function RateModal({ game, currentRating, onClose, onSaved }) {
+  const [score, setScore] = useState(currentRating?.score || 0);
+  const [status, setStatus] = useState(currentRating?.status || "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    const { error } = await supabase
+      .from("ratings")
+      .upsert({
+        game_id: game.id,
+        user_id: "me",
+        score: score || 0,
+        status: status || "backlog",
+        logged_at: new Date().toISOString().slice(0, 10),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "game_id,user_id" });
+    setSaving(false);
+    if (!error) {
+      onSaved?.();
+      onClose?.();
+    }
+  }
+
+  async function remove() {
+    setSaving(true);
+    await supabase.from("ratings").delete().eq("game_id", game.id).eq("user_id", "me");
+    setSaving(false);
+    onSaved?.();
+    onClose?.();
+  }
+
+  return (
+    <div className="rate-modal-overlay" onClick={onClose}>
+      <div className="rate-modal fade-in" onClick={(e) => e.stopPropagation()}>
+        <div className="flex gap-3 mb-4">
+          <GameImg src={game.cover_url} className="w-16 h-20 rounded object-cover flex-shrink-0" />
+          <div className="min-w-0">
+            <div className="font-display font-bold text-sm text-white truncate">{game.title}</div>
+            {game.released && <div className="text-[11px] text-cyan-400/40 font-mono-tech">{new Date(game.released).getFullYear()}</div>}
+            <div className="flex flex-wrap gap-1 mt-1">
+              {(game.genres || []).slice(0, 3).map((g) => (
+                <span key={g} className="genre-tag">{g}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <div className="text-[11px] font-mono-tech text-white/40 mb-2 uppercase tracking-wider">// Rating</div>
+          <div className="flex items-center gap-3">
+            <StarRating score={score} onRate={setScore} size="text-lg" />
+            <span className="text-sm font-mono-tech text-cyan-400/60">{score > 0 ? `${score.toFixed(1)} / 5.0` : "not rated"}</span>
+          </div>
+        </div>
+
+        <div className="mb-5">
+          <div className="text-[11px] font-mono-tech text-white/40 mb-2 uppercase tracking-wider">// Status</div>
+          <div className="status-selector">
+            {STATUSES.map((s) => (
+              <span
+                key={s}
+                className={`status-tag status-${s} ${status === s ? "selected" : ""}`}
+                onClick={() => setStatus(s)}
+              >
+                {s}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <button onClick={save} disabled={saving}
+            className="cyber-btn flex-1 px-4 py-2.5 rounded text-sm">
+            {saving ? "SAVING…" : "SAVE"}
+          </button>
+          {currentRating && (
+            <button onClick={remove} disabled={saving}
+              className="px-4 py-2.5 rounded text-sm border border-rose-500/30 text-rose-400/70 hover:bg-rose-500/10 transition font-display font-bold uppercase tracking-wider">
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// DATA HOOKS
+// ============================================================
 function useLibrary(version) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -63,7 +190,7 @@ function useLibrary(version) {
       setLoading(false);
     })();
   }, [version]);
-  return { rows, loading };
+  return { rows, setRows, loading };
 }
 
 function useUpcoming(version) {
@@ -89,7 +216,9 @@ function useRpc(name, limit, version) {
   return rows;
 }
 
-// ----------------------------------------------------------- nav icons
+// ============================================================
+// SYNC BUTTON
+// ============================================================
 const NavIcon = ({ name }) => {
   const icons = {
     home: <path d="M3 12l9-9 9 9M5 10v10h4v-6h6v6h4V10" />,
@@ -104,7 +233,6 @@ const NavIcon = ({ name }) => {
   );
 };
 
-// ----------------------------------------------------------- sync button
 function SyncButton({ onDone, compact }) {
   const [state, setState] = useState("idle");
   const [msg, setMsg] = useState("");
@@ -143,7 +271,9 @@ function SyncButton({ onDone, compact }) {
   );
 }
 
-// ------------------------------------------------------------------- shell
+// ============================================================
+// SHELL
+// ============================================================
 function TopNav({ onSyncDone }) {
   const link = ({ isActive }) =>
     `px-3 py-2 rounded text-sm font-display font-bold uppercase tracking-wider transition ${
@@ -166,14 +296,12 @@ function BottomNav({ onSyncDone }) {
   const link = ({ isActive }) => isActive ? "active" : "";
   return (
     <>
-      {/* mobile top bar — logo + sync only */}
       <div className="md:hidden flex items-center justify-between px-4 py-2.5 border-b border-cyan-500/10 bg-[#07070d]/80 backdrop-blur-md sticky top-0 z-30">
         <Link to="/" className="text-base font-display font-black neon-text-cyan tracking-widest">
           ◈ BACKLOG<span className="neon-text-magenta">.EXE</span>
         </Link>
         <SyncButton onDone={onSyncDone} compact />
       </div>
-      {/* mobile bottom nav */}
       <nav className="bottom-nav md:hidden">
         <NavLink to="/" end className={link}><NavIcon name="home" /><span>Home</span></NavLink>
         <NavLink to="/backlog" className={link}><NavIcon name="backlog" /><span>Backlog</span></NavLink>
@@ -200,8 +328,10 @@ function Layout({ onSyncDone, children }) {
   );
 }
 
-// -------------------------------------------------------------------- Home
-function StatCard({ label, value, sub, accent }) {
+// ============================================================
+// HOME
+// ============================================================
+function StatCard({ label, value, sub }) {
   return (
     <div className="hud-card rounded-lg p-4 sm:p-5">
       <div className="hud-value text-2xl sm:text-3xl lg:text-4xl">{value}</div>
@@ -241,7 +371,7 @@ function Home({ version, onSyncDone }) {
           <StatCard label="Games Owned" value={stats.total} />
           <StatCard label="Played" value={stats.played} />
           <StatCard label="Hours" value={stats.hours} sub="total" />
-          <StatCard label="Avg Rating" value={stats.avg} sub="backloggd scale" />
+          <StatCard label="Avg Rating" value={stats.avg} sub="your ratings" />
         </div>
 
         <div className="grid md:grid-cols-2 gap-4">
@@ -277,13 +407,16 @@ function Home({ version, onSyncDone }) {
   );
 }
 
-// --------------------------------------------------------------- Backlog
+// ============================================================
+// BACKLOG — with inline ratings
+// ============================================================
 function Backlog({ version, onSyncDone }) {
-  const { rows, loading } = useLibrary(version);
+  const { rows, setRows, loading } = useLibrary(version);
   const [q, setQ] = useState("");
   const [genre, setGenre] = useState("All");
   const [status, setStatus] = useState("All");
   const [sort, setSort] = useState("playtime");
+  const [rateGame, setRateGame] = useState(null);
 
   const genres = useMemo(
     () => ["All", ...[...new Set(rows.flatMap((r) => r.game?.genres || []))].sort()],
@@ -303,14 +436,46 @@ function Backlog({ version, onSyncDone }) {
     return r;
   }, [rows, q, genre, status, sort]);
 
+  // Optimistic update when a rating is saved
+  const onRatingSaved = useCallback(() => {
+    setRateGame(null);
+    // Refetch library data
+    (async () => {
+      const { data } = await supabase
+        .from("library_entries")
+        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,rating:ratings(score,status))")
+        .order("playtime_forever", { ascending: false });
+      const norm = (data || []).map((r) => ({
+        ...r,
+        rating: r.game?.rating ?? null,
+        game: r.game ? { ...r.game, rating: undefined } : r.game,
+      }));
+      setRows(norm);
+    })();
+  }, [setRows]);
+
+  // Quick inline star rating (click on card)
+  async function quickRate(gameId, newScore) {
+    // Optimistic update
+    setRows((prev) => prev.map((r) =>
+      r.game?.id === gameId
+        ? { ...r, rating: { ...(r.rating || {}), score: newScore, status: r.rating?.status || "played" } }
+        : r
+    ));
+    await supabase.from("ratings").upsert({
+      game_id: gameId, user_id: "me", score: newScore,
+      status: "played", logged_at: new Date().toISOString().slice(0, 10),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "game_id,user_id" });
+  }
+
   return (
     <Layout onSyncDone={onSyncDone}>
       <div className="fade-in">
         <h1 className="glitch text-xl sm:text-2xl font-display font-black mb-1 text-white" data-text="BACKLOG">BACKLOG</h1>
-        <p className="font-mono-tech text-[11px] sm:text-xs text-cyan-400/40 mb-5">// {filtered.length} ENTRIES</p>
+        <p className="font-mono-tech text-[11px] sm:text-xs text-cyan-400/40 mb-5">// {filtered.length} ENTRIES · CLICK TO RATE</p>
         <div className="scan-bar mb-5" />
 
-        {/* filters — scrollable on mobile */}
         <div className="flex gap-2 mb-5 overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
             className="cyber-input min-w-[120px] flex-shrink-0" />
@@ -318,7 +483,7 @@ function Backlog({ version, onSyncDone }) {
             {genres.map((g) => <option key={g}>{g}</option>)}
           </select>
           <select value={status} onChange={(e) => setStatus(e.target.value)} className="cyber-input flex-shrink-0">
-            {["All", "played", "playing", "backlog", "wishlist", "dropped"].map((s) => <option key={s}>{s}</option>)}
+            {["All", ...STATUSES].map((s) => <option key={s}>{s}</option>)}
           </select>
           <select value={sort} onChange={(e) => setSort(e.target.value)} className="cyber-input flex-shrink-0">
             <option value="playtime">Most Played</option>
@@ -330,9 +495,15 @@ function Backlog({ version, onSyncDone }) {
         {loading ? <p className="text-cyan-400/40 font-mono-tech text-sm">// LOADING…</p> : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
             {filtered.map((r) => (
-              <div key={r.game.id} className="game-card rounded-lg overflow-hidden">
+              <div key={r.game.id} className="game-card rounded-lg overflow-hidden cursor-pointer"
+                   onClick={() => setRateGame({ game: r.game, rating: r.rating })}>
                 <div className="card-img-wrap">
                   <GameImg src={r.game.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+                  {r.rating?.status && (
+                    <div className="absolute top-1.5 right-1.5 z-10">
+                      <StatusBadge status={r.rating.status} />
+                    </div>
+                  )}
                 </div>
                 <div className="p-2 sm:p-3">
                   <div className="text-xs sm:text-sm font-display font-bold truncate text-white/90">{r.game.title}</div>
@@ -342,20 +513,31 @@ function Backlog({ version, onSyncDone }) {
                       <span key={g} className="genre-tag">{g}</span>
                     ))}
                   </div>
-                  {r.rating?.score > 0 && (
-                    <div className="text-xs neon-text-lime mt-1 font-mono-tech">★ {r.rating.score}</div>
-                  )}
+                  <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
+                    <StarRating score={r.rating?.score || 0} onRate={(s) => quickRate(r.game.id, s)} />
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {rateGame && (
+        <RateModal
+          game={rateGame.game}
+          currentRating={rateGame.rating}
+          onClose={() => setRateGame(null)}
+          onSaved={onRatingSaved}
+        />
+      )}
     </Layout>
   );
 }
 
-// ------------------------------------------------------ Recommendations
+// ============================================================
+// RECOMMENDATIONS
+// ============================================================
 function MatchBar({ score, max = 10 }) {
   const pct = Math.min(100, (Number(score) / max) * 100);
   return (
@@ -393,9 +575,10 @@ function Recommend({ version, onSyncDone }) {
         </div>
 
         {items.length === 0 ? (
-          <p className="text-white/30 font-mono-tech text-sm">
-            {tab === "play" ? "// RATE GAMES TO SEED RECOMMENDATIONS" : "// NO MATCHES — RATE MORE GAMES"}
-          </p>
+          <div className="text-center py-8">
+            <p className="text-white/30 font-mono-tech text-sm mb-2">// NO RECOMMENDATIONS YET</p>
+            <p className="text-white/20 text-xs">Rate a few games in the Backlog tab to seed the genre affinity engine.</p>
+          </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
             {items.map((r, i) => (
@@ -410,7 +593,7 @@ function Recommend({ version, onSyncDone }) {
                       {fmtHours(r.playtime_forever)} · {r.status}
                     </div>
                   ) : (
-                    <div className="text-[10px] sm:text-xs text-cyan-400/40 font-mono-tech mt-0.5">
+                    <div className="text-[10px] sm:text-xs neon-text-magenta font-mono-tech mt-0.5">
                       {new Date(r.released).toLocaleDateString()}
                     </div>
                   )}
@@ -425,7 +608,9 @@ function Recommend({ version, onSyncDone }) {
   );
 }
 
-// ------------------------------------------------------------- Upcoming
+// ============================================================
+// UPCOMING
+// ============================================================
 function Upcoming({ version, onSyncDone }) {
   const rows = useUpcoming(version);
   return (
@@ -467,7 +652,9 @@ function Upcoming({ version, onSyncDone }) {
   );
 }
 
-// -------------------------------------------------------------------- App
+// ============================================================
+// APP
+// ============================================================
 export default function App() {
   const [version, setVersion] = useState(0);
   const bump = () => setVersion((v) => v + 1);
