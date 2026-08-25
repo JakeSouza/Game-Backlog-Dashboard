@@ -1,26 +1,39 @@
 # Gaming Backlog — Setup &amp; Architecture
 
-A static, GitHub Pages–hosted dashboard for your gaming backlog. Data from **Steam**, **RAWG**, and **backloggd** is synced into **Supabase** on demand by **GitHub Actions**; the site reads it back read-only via the anon key + Row Level Security. You trigger a refresh yourself with the **Sync now** button — no scheduled runs.
+A static, GitHub Pages–hosted dashboard for your gaming backlog. Data lives in **Supabase** and is read live by the site. A **Sync now** button on the page calls a **Supabase Edge Function** that fetches Steam + RAWG + backloggd and writes straight to Postgres. GitHub Actions only deploys the static site on push — it's no longer involved in data sync at all.
 
 ## How it fits together
 
 ```mermaid
 flowchart LR
-  UI[React SPA on GitHub Pages] -->|anon key, POST /functions/v1/trigger-sync| EF[Supabase Edge Function]
-  EF -->|GitHub PAT, workflow_dispatch API| GH[GitHub Actions]
-  A[Steam API] --> S[Sync job in Actions]
-  B[RAWG API] --> S
-  C[backloggd scrape] --> S
-  GH --> S
-  S -->|service-role key| DB[(Supabase Postgres)]
+  UI[React SPA on GitHub Pages] -->|anon key, POST /functions/v1/sync-games| EF[Supabase Edge Function]
+  EF -->|Steam API| A
+  EF -->|RAWG API| B
+  EF -->|backloggd scrape| C
+  A --> EF
+  B --> EF
+  C --> EF
+  EF -->|service-role key, writes| DB[(Supabase Postgres)]
   DB -->|anon key + RLS, read-only| UI
-  GH -->|build + push dist| Pages
+  GIT[git push] -->|build + deploy| Pages
 ```
 
-- The site is **static** — it can't hold secrets. The **Sync now** button calls a Supabase Edge Function (using only the anon key); the function holds a GitHub PAT server-side and fires the workflow via GitHub's `workflow_dispatch` API.
-- Supabase RLS exposes **public read-only** access; the sync uses the **service role** key (bypasses RLS).
-- Recommendations are **Postgres RPCs** so they recompute as you rate more games.
-- **No schedule** — sync only happens when you click the button.
+- **One server component**: the `sync-games` Edge Function does the whole sync. The site calls it with the anon key it already has.
+- **No GitHub PAT, no workflow\_dispatch, no polling, no rebuild-on-sync.** The site reads Supabase live, so after a sync the button just refetches data instantly.
+- GitHub Actions is reduced to a standard **build-and-deploy on push** (the official Pages action). No secrets beyond what the build needs.
+- Supabase auto-injects `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` into edge functions, so you only set **4** function secrets.
+
+## Why this is lighter than the Actions-based version
+
+
+|                             | Before (Actions sync)                                      | Now (Edge Function sync)       |
+| --------------------------- | ---------------------------------------------------------- | ------------------------------ |
+| Trigger path                | site → edge fn → GitHub PAT → Actions → rebuild → redeploy | site → edge fn → done          |
+| Moving parts                | 2 server pieces + a build cycle                            | 1 server piece                 |
+| Secrets in GitHub           | 7 + a GitHub PAT                                           | 2 (build only)                 |
+| Time to refresh             | \~1-2 min (full CI build)                                  | a few seconds (just API calls) |
+| GitHub Actions minutes used | per sync                                                   | only on code push              |
+
 
 ## Data sources
 
@@ -37,79 +50,64 @@ flowchart LR
 
 ```
 gaming-backlog/
-├─ .github/workflows/sync-backlog.yml     # the workflow canvas (manual only)
+├─ .github/workflows/deploy.yml          # build + deploy site on push (the workflow canvas)
 ├─ .env.example
 ├─ index.html
-├─ package.json                           # site deps + build
+├─ package.json
 ├─ vite.config.js
 ├─ tailwind.config.js
 ├─ postcss.config.js
 ├─ sync/
-│  ├─ package.json                        # sync deps (supabase-js, cheerio)
-│  └─ sync.mjs                            # the sync script canvas
+│  ├─ package.json
+│  └─ sync.mjs                           # OPTIONAL local backfill (first run / big library)
 ├─ supabase/
 │  └─ functions/
-│     └─ trigger-sync/
-│        └─ index.ts                      # the edge function canvas
+│     └─ sync-games/
+│        └─ index.ts                     # the sync edge function (the edge canvas)
 └─ src/
    ├─ main.jsx
    ├─ index.css
-   └─ App.jsx                             # the React app canvas
+   └─ App.jsx                            # the React app canvas
 ```
 
 ## 1 · Supabase (you already have a project)
 
-1. In the Supabase **SQL editor**, paste the **Supabase Schema** canvas and run it. This creates `games`, `library_entries`, `ratings`, `upcoming_releases`, enables RLS (public read-only), and the `recommend_play_next()` / `recommend_discover()` functions.
-2. Copy **Project URL**, **anon key**, and **service\_role key** from *Project Settings → API*. You'll use anon in the site, service\_role in Actions (never in the browser).
+1. Run the **Supabase Schema** canvas in the SQL editor. Creates `games`, `library_entries`, `ratings`, `upcoming_releases`, public read-only RLS, and the `recommend_play_next()` / `recommend_discover()` RPCs.
+2. Grab **Project URL** and **anon key** from *Settings → API*. (The service-role key is auto-injected into functions; you don't paste it anywhere.)
 
 ## 2 · Get API keys &amp; IDs
 
 - **Steam API key:** [https://steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey)
-- **Steam ID:** your 17-digit ID (use [https://steamid.io](https://steamid.io)). Your profile's games list must be **public**.
-- **RAWG API key:** free at [https://rawg.io/apidocs](https://rawg.io/apidocs) (instant signup).
-- **backloggd username:** your backloggd username (the `/u/<username>` part).
+- **Steam ID:** 17-digit ID via [https://steamid.io](https://steamid.io). Profile games list must be **public**.
+- **RAWG API key:** free at [https://rawg.io/apidocs](https://rawg.io/apidocs).
+- **backloggd username:** the `/u/<username>` part of your profile URL.
 
-## 3 · GitHub PAT for the manual trigger
-
-The Edge Function needs a token to call GitHub's workflow dispatch API. Use a **fine-grained PAT** (recommended):
-
-1. [https://github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new) (or a classic token with `repo` + `workflow` scope).
-2. Resource owner: the repo owner; repository: your `gaming-backlog` repo.
-3. Permissions → **Actions: Read and write** (this grants workflow dispatch). Read on metadata is auto-included.
-4. Copy the token (`github_pat_…`). It lives only in Supabase, never in the browser or repo.
-
-## 4 · Deploy the Edge Function
-
-Install the Supabase CLI, then from the repo root:
+## 3 · Deploy the Edge Function (the sync)
 
 ```bash
 supabase login
-# link to your project (use the project ref from Settings > API)
 supabase link --project-ref <project-ref>
-
-# deploy the function (no-verify-jwt so the anon key is enough)
-supabase functions deploy trigger-sync --no-verify-jwt
-
-# set the function's secrets
-supabase secrets set GITHUB_PAT=github_pat_xxx
-supabase secrets set GITHUB_REPO=owner/gaming-backlog
-supabase secrets set WORKFLOW_REF=sync-backlog.yml
-supabase secrets set GITHUB_BRANCH=main
+supabase functions deploy sync-games --no-verify-jwt
+supabase secrets set \
+  STEAM_API_KEY=... \
+  STEAM_ID=... \
+  RAWG_API_KEY=... \
+  BACKLOGGD_USERNAME=...
 ```
 
-The site calls `POST /functions/v1/trigger-sync` (anon key in header) → the function fires the workflow and returns the latest run; a `GET` to the same endpoint returns run status for polling.
+That's the entire data backend. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided to the function automatically. The site calls `POST /functions/v1/sync-games` with the anon key.
 
-## 5 · Add repo secrets (for the Actions sync job itself)
+> **Edge-function timeout:** Supabase edge functions cap execution (default \~150s, configurable). The function only enriches **new** games with RAWG (capped at 40/call), so routine syncs are fast. For a very large first backfill, run `sync/sync.mjs` locally once (no timeout) — then use the button for ongoing updates.
+
+## 4 · GitHub repo secrets (for the site build only)
 
 *Settings → Secrets and variables → Actions:*
 
-`STEAM_API_KEY`, `STEAM_ID`, `RAWG_API_KEY`, `BACKLOGGD_USERNAME`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`
+`SUPABASE_URL`, `SUPABASE_ANON_KEY`
 
-Also add a repo **variable** `VITE_BASE_PATH` = `/` (for a `user.github.io` repo) or `/<repo-name>/` (for a project repo).
+And a repo **variable** `VITE_BASE_PATH` = `/` (user pages) or `/<repo-name>/` (project repo). That's it — no Steam/RAWG/service-role/GitHub-PAT here; those live in Supabase.
 
-> The GitHub PAT does **not** go in repo secrets — it lives in Supabase function secrets (step 4).
-
-## 6 · Config files
+## 5 · Config files
 
 `package.json` (site root):
 
@@ -127,26 +125,23 @@ Also add a repo **variable** `VITE_BASE_PATH` = `/` (for a `user.github.io` repo
     "recharts": "^2.12.7"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.1",
+    "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.41",
     "tailwindcss": "^3.4.10",
-    "vite": "^5.4.0"
+    "vite": "^7.3.6"
   }
 }
 ```
 
-`sync/package.json`:
+`sync/package.json` (optional, local backfill only):
 
 ```json
 {
   "name": "sync",
   "private": true,
   "type": "module",
-  "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
-    "cheerio": "^1.0.0"
-  }
+  "dependencies": { "@supabase/supabase-js": "^2.45.0", "cheerio": "^1.0.0" }
 }
 ```
 
@@ -155,11 +150,7 @@ Also add a repo **variable** `VITE_BASE_PATH` = `/` (for a `user.github.io` repo
 ```js
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-
-export default defineConfig({
-  plugins: [react()],
-  base: process.env.VITE_BASE_PATH || "/",
-});
+export default defineConfig({ plugins: [react()], base: process.env.VITE_BASE_PATH || "/" });
 ```
 
 `tailwind.config.js`:
@@ -181,7 +172,6 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
-
 createRoot(document.getElementById("root")).render(<App />);
 ```
 
@@ -218,35 +208,33 @@ VITE_SUPABASE_ANON_KEY=
 VITE_BASE_PATH=/
 ```
 
-## 7 · Build &amp; deploy
+## 6 · Deploy
 
-- The workflow is **manual-only** (`workflow_dispatch`); it builds the site and pushes `dist/` to the `gh-pages` branch via `peaceiris/actions-gh-pages`.
-- In **repo Settings → Pages**, set source to the **gh-pages branch** (`/root`).
-- First run: trigger it from the site's **Sync now** button (once the edge function is deployed), or manually under *Actions → Sync gaming backlog → Run workflow*, then enable Pages.
+- Push to `main`. The `deploy.yml` workflow builds and publishes to GitHub Pages via the official `deploy-pages` action.
+- In **repo Settings → Pages**, set source to **GitHub Actions**.
+- Visit the site, hit **↻ Sync now**, and the edge function populates Supabase. The page refetches instantly — no rebuild.
 
-## 8 · The Sync now button
+## 7 · The Sync now button
 
-In the app's top nav, **↻ Sync now** calls the edge function:
+`SyncButton` calls `supabase.functions.invoke("sync-games", { method: "POST" })`:
 
-1. `POST /functions/v1/trigger-sync` → fires the workflow, returns the new run.
-2. The button shows **⟳ Syncing…** and polls the run every 8s via `GET /functions/v1/trigger-sync`.
-3. When the run completes it flips to **✓ Synced** and prompts a refresh to load the new data.
+1. The edge function fetches Steam + RAWG + backloggd and upserts into Postgres.
+2. It returns a summary (`games`, `enriched`, `ratings`, `upcoming`, elapsed time).
+3. On success, the button bumps a `version` counter and every page's data hook refetches — instant refresh, no reload.
 
-The whole cycle (sync data → build → deploy gh-pages) takes \~1-2 min; just refresh the page after it reports done.
+## 8 · Recommendations
 
-## 9 · Recommendations
+Two Postgres RPCs (in the schema canvas), both keyed on **genre affinity** (your average rating per genre across played/playing games):
 
-Two Postgres RPCs (in the schema canvas):
+- **`recommend_play_next(limit)`** — owned games you've barely played (`< 4h`, status backlog/wishlist/playing/dropped), ranked by genre affinity. What to start next.
+- **`recommend_discover(limit)`** — upcoming releases you don't own, ranked by the same affinity. New games matching your taste.
 
-- **`recommend_play_next(limit)`** — your owned games that are unplayed/shelved (`< 4h` played, status in backlog/wishlist/playing/dropped), scored by **genre affinity** = your average rating per genre across played/playing games. Ranks what to start next.
-- **`recommend_discover(limit)`** — upcoming releases you don't own, scored by the same genre affinity. Reveals new games matching your taste.
-
-Both adapt automatically as the sync adds more ratings; tune the `< 240` minutes threshold or status filter in the SQL to taste.
+Both adapt automatically as you rate more games.
 
 ## Notes &amp; caveats
 
-- **Manual sync only** — no cron, no wasted Actions minutes. The button is the single trigger.
-- **The PAT never reaches the browser.** It's a Supabase function secret; the site only ever sends the anon key.
-- **backloggd scraping is best-effort** — no official API. If selectors change, update the `cheerio` section in `sync.mjs`.
-- **Steam → RAWG matching is by title search**; mismatches are possible for remasters/editions. Refine `rawgSearch()` with a release-year tiebreaker if needed.
-- Backloggd-only games you've rated but don't own on Steam still get a `games` + `ratings` row so they appear in stats.
+- **No GitHub PAT anywhere.** The PAT-free design is the whole point — secrets stay in Supabase function secrets.
+- **backloggd scraping is best-effort** (no official API). If selectors change, update the scrape section in the edge function.
+- **Steam → RAWG matching is by title search**; remasters/editions may mismatch. Add a release-year tiebreaker in `rawgSearch()` if needed.
+- Backloggd-only games you've rated but don't own on Steam still get `games` + `ratings` rows so they appear in stats.
+- For a very large first sync, use the local `sync.mjs` once to avoid the edge timeout; the button handles all routine updates after that.
