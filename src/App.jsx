@@ -901,6 +901,11 @@ function Upcoming({ version, onSyncDone }) {
 // keystroke. Uses import.meta.env.VITE_RAWG_API_KEY, which must be set as
 // a GitHub Actions build variable (see deploy.yml) — this key ends up in
 // the public JS bundle, same as VITE_SUPABASE_ANON_KEY already does.
+// AddGameSearch — searches RAWG for any released game (not just ones
+// already in Upcoming/Discover) and adds it to the wishlist via the
+// existing addToWishlist() helper. Goes through the search-games edge
+// function rather than calling RAWG directly, since RAWG's API doesn't
+// send CORS headers permitting browser calls.
 function AddGameSearch({ onAdded }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -910,23 +915,13 @@ function AddGameSearch({ onAdded }) {
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); setError(""); return; }
-    const key = import.meta.env.VITE_RAWG_API_KEY;
-    if (!key) {
-      setError("VITE_RAWG_API_KEY is not set in the build — see deploy.yml.");
-      return;
-    }
     const t = setTimeout(async () => {
       setSearching(true);
       setError("");
       try {
-        const url = `https://api.rawg.io/api/games?key=${key}&search=${encodeURIComponent(query)}&page_size=8`;
-        const r = await fetch(url);
-        if (!r.ok) {
-          const body = await r.text().catch(() => "");
-          throw new Error(`RAWG returned ${r.status}: ${body.slice(0, 200)}`);
-        }
-        const j = await r.json();
-        setResults(j.results || []);
+        const { data, error: fnError } = await supabase.functions.invoke("search-games", { body: { q: query } });
+        if (fnError || data?.error) throw new Error(data?.error || fnError.message);
+        setResults(data?.results || []);
       } catch (e) {
         setResults([]);
         setError(e?.message || "Search failed — check the browser console for details.");
