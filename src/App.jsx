@@ -261,7 +261,7 @@ function useWishlist(version) {
     (async () => {
       const { data } = await supabase
         .from("ratings")
-        .select("score,status,game:games(id,title,cover_url,rawg_rating,genres,released)")
+        .select("score,status,game:games(id,rawg_id,title,cover_url,rawg_rating,genres,released)")
         .eq("status", "wishlist")
         .eq("user_id", "me")
         .order("updated_at", { ascending: false });
@@ -271,24 +271,36 @@ function useWishlist(version) {
   return rows;
 }
 
-// Add a game to wishlist — works for games already in DB (by id) or
-// upcoming releases (creates a games row first, then the rating)
-async function addToWishlist(game) {
-  let gameId = game.id || game.game_id;
+// Add a game to wishlist. Pass { fromUpcoming: true } for upcoming releases
+// so we skip the game.id check (it's an upcoming_releases row ID, not a games.id).
+// For recommended games, game.game_id or game.id should be the real games.id.
+// For upcoming/discovery games, a games row is created via rawg_id upsert.
+async function addToWishlist(game, fromUpcoming = false) {
+  let gameId = fromUpcoming ? null : (game.game_id || game.id);
+  // Validate: if gameId looks like it's from upcoming_releases (not a games row),
+  // fall through to the create-by-rawg_id path.
   if (!gameId) {
-    // upcoming release — create a games row first
-    const { data, error } = await supabase.from("games").upsert({
-      title: game.title,
-      rawg_id: game.rawg_id,
-      cover_url: game.cover_url,
-      released: game.released,
-      genres: game.genres,
-      platforms: game.platforms,
-      rawg_rating: game.rawg_rating,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "rawg_id" }).select();
-    if (error || !data?.length) return false;
-    gameId = data[0].id;
+    // Check if a games row already exists for this rawg_id
+    if (game.rawg_id) {
+      const { data: existing } = await supabase
+        .from("games").select("id").eq("rawg_id", game.rawg_id).limit(1);
+      if (existing?.length) gameId = existing[0].id;
+    }
+    if (!gameId) {
+      // Create a games row first (upsert by rawg_id)
+      const { data, error } = await supabase.from("games").upsert({
+        title: game.title,
+        rawg_id: game.rawg_id,
+        cover_url: game.cover_url,
+        released: game.released,
+        genres: game.genres,
+        platforms: game.platforms,
+        rawg_rating: game.rawg_rating,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "rawg_id" }).select();
+      if (error || !data?.length) return false;
+      gameId = data[0].id;
+    }
   }
   const { error: e2 } = await supabase.from("ratings").upsert({
     game_id: gameId, user_id: "me", score: 0, status: "wishlist",
@@ -624,12 +636,12 @@ function Backlog({ version, onSyncDone }) {
 }
 
 // ------------------------------------------------------ Recommendations
-function MatchBar({ score, max = 10 }) {
+function MatchBar({ score, max = 10, label = "MATCH" }) {
   const pct = Math.min(100, (Number(score) / max) * 100);
   return (
     <div className="mt-1.5">
       <div className="flex justify-between items-center mb-0.5">
-        <span className="text-[10px] font-mono-tech">MATCH</span>
+        <span className="text-[10px] font-mono-tech" style={{color:'var(--text-dim)'}}>{label}</span>
         <span className="text-[10px] font-mono-tech" style={{color:'var(--accent)'}}>{Number(score).toFixed(2)}</span>
       </div>
       <div className="match-bar"><div className="match-bar-fill" style={{ width: `${pct}%` }} /></div>
@@ -644,13 +656,24 @@ function Recommend({ version, onSyncDone }) {
   const [added, setAdded] = useState({});
   const [wlVersion, setWlVersion] = useState(0);
   const wishlist = useWishlist(wlVersion);
-  const wishlistedIds = useMemo(() => new Set(wishlist.map((w) => w.game?.id).filter(Boolean)), [wishlist]);
+  const wishlistedIds = useMemo(() => {
+    const s = new Set();
+    wishlist.forEach((w) => {
+      if (w.game?.id) s.add(String(w.game.id));
+      if (w.game?.rawg_id) s.add(String(w.game.rawg_id));
+    });
+    return s;
+  }, [wishlist]);
   const items = tab === "play" ? playNext : discover;
 
-  async function handleAdd(r) {
-    const gid = r.game_id || r.id;
-    setAdded((p) => ({ ...p, [gid]: true }));
-    await addToWishlist({ ...r, id: gid });
+  async function handleAdd(r, e) {
+    e?.stopPropagation();
+    // Use a stable unique key: game_id for DB games, rawg_id for discovery games
+    const key = String(r.game_id || r.rawg_id || r.title);
+    setAdded((p) => ({ ...p, [key]: true }));
+    // Pass game_id if available (DB game), otherwise let addToWishlist create by rawg_id
+    const payload = r.game_id ? { ...r, id: r.game_id } : { ...r, id: null };
+    await addToWishlist(payload);
     setWlVersion((v) => v + 1);
   }
 
@@ -658,7 +681,9 @@ function Recommend({ version, onSyncDone }) {
     <Layout onSyncDone={onSyncDone}>
       <div className="fade-in">
         <h1 className="text-xl sm:text-2xl font-display font-black mb-1" style={{color:'var(--text)'}}>RECOMMEND</h1>
-        <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>genre affinity engine</p>
+        <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>
+          genre affinity engine · scores 0–10 based on genre overlap with your rated games
+        </p>
         <div className="scan-bar mb-5" />
 
         <div className="flex gap-2 mb-5">
@@ -679,8 +704,9 @@ function Recommend({ version, onSyncDone }) {
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
             {items.map((r, i) => {
-              const gid = r.game_id || r.id;
-              const isWishlisted = tab === "discover" && (added[gid] || wishlistedIds.has(gid));
+              const gid = String(r.game_id || r.rawg_id || r.title);
+              const isWishlisted = tab === "discover" && (added[gid] || wishlistedIds.has(gid) || wishlistedIds.has(String(r.rawg_id)));
+              const matchPct = r.score ? Math.min(100, (Number(r.score) / 10) * 100) : 0;
               return (
                 <div key={tab === "play" ? r.game_id : i} className="game-card rounded-lg overflow-hidden">
                   <div className="card-img-wrap">
@@ -697,10 +723,10 @@ function Recommend({ version, onSyncDone }) {
                         {r.released ? new Date(r.released).toLocaleDateString() : ''}
                       </div>
                     )}
-                    <MatchBar score={r.score} />
+                    <MatchBar score={r.score} label={tab === "play" ? "REPLAY VALUE" : "GENRE MATCH"} />
                     {tab === "discover" && (
                       <button
-                        onClick={() => !isWishlisted && handleAdd(r)}
+                        onClick={(e) => { e.stopPropagation(); if (!isWishlisted) handleAdd(r, e); }}
                         className={`wishlist-add-btn mt-1.5 ${isWishlisted ? 'added' : ''}`}
                       >
                         {isWishlisted ? '✓ Wishlisted' : '+ Wishlist'}
@@ -724,11 +750,20 @@ function Upcoming({ version, onSyncDone }) {
   const [wlVersion, setWlVersion] = useState(0);
   const wishlist = useWishlist(wlVersion);
 
-  const wishlistedIds = useMemo(() => new Set(wishlist.map((w) => w.game?.id).filter(Boolean)), [wishlist]);
+  const wishlistedIds = useMemo(() => {
+    const s = new Set();
+    wishlist.forEach((w) => {
+      if (w.game?.id) s.add(String(w.game.id));
+      if (w.game?.rawg_id) s.add(String(w.game.rawg_id));
+    });
+    return s;
+  }, [wishlist]);
 
-  async function handleAdd(r) {
-    setAdded((p) => ({ ...p, [r.id]: true }));
-    await addToWishlist(r);
+  async function handleAdd(r, e) {
+    e?.stopPropagation();
+    const key = String(r.rawg_id || r.title);
+    setAdded((p) => ({ ...p, [key]: true }));
+    await addToWishlist(r, true);
     setWlVersion((v) => v + 1);
   }
 
@@ -744,7 +779,8 @@ function Upcoming({ version, onSyncDone }) {
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
             {rows.map((r) => {
-              const isWishlisted = added[r.id] || wishlistedIds.has(r.rawg_id);
+              const key = String(r.rawg_id || r.title);
+              const isWishlisted = added[key] || wishlistedIds.has(String(r.rawg_id));
               return (
                 <div key={r.id} className="game-card rounded-lg overflow-hidden">
                   <div className="card-img-wrap">
@@ -765,7 +801,7 @@ function Upcoming({ version, onSyncDone }) {
                         <div className="text-xs font-mono-tech" style={{color:'var(--success)'}}>★ {r.rawg_rating}</div>
                       )}
                       <button
-                        onClick={() => !isWishlisted && handleAdd(r)}
+                        onClick={(e) => { e.stopPropagation(); if (!isWishlisted) handleAdd(r, e); }}
                         className={`wishlist-add-btn ${isWishlisted ? 'added' : ''}`}
                         style={{ marginLeft: 'auto' }}
                       >
