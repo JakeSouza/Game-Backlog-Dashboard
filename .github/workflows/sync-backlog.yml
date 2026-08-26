@@ -26,7 +26,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          VITE_RAWG_API_KEY: ${{ vars.VITE_RAWG_API_KEY }}
+          VITE_RAWG_API_KEY: ${{ secrets.VITE_RAWG_API_KEY }}
           VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || '/' }}
       - uses: actions/upload-pages-artifact@v3
         with: { path: dist }
