@@ -343,6 +343,40 @@ body {
 .wishlist-add-btn.added { border-color: rgba(255,217,61,0.3); color: var(--warning); background: rgba(255,217,61,0.08); cursor: default; }
 
 /* ============================================================
+   DEAL BADGE — IsThereAnyDeal price/discount (new)
+   ============================================================ */
+.deal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+.deal-badge-sale {
+  border-color: rgba(57,255,156,0.3);
+  background: rgba(57,255,156,0.08);
+}
+.deal-cut {
+  color: var(--success);
+  font-weight: 700;
+}
+.deal-price {
+  color: var(--text);
+}
+.deal-badge-sale .deal-price {
+  color: var(--success);
+}
+.deal-regular {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+/* ============================================================
    MOST PLAYED — top-5 cover grid (new)
    ============================================================ */
 .mp-card { position: relative; }

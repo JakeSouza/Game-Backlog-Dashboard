@@ -99,6 +99,28 @@ function StatusBadge({ status }) {
   return <span className={cls}>{status || "unrated"}</span>;
 }
 
+// DealBadge — current price / discount from IsThereAnyDeal, if tracked.
+// Renders nothing if there's no price data yet (game not resolved to an
+// ITAD id, or sync-deals hasn't run).
+function DealBadge({ game }) {
+  if (game?.deal_price == null) return null;
+  const onSale = game.deal_cut > 0;
+  const badge = (
+    <span className={`deal-badge ${onSale ? "deal-badge-sale" : ""}`}>
+      {onSale && <span className="deal-cut">-{game.deal_cut}%</span>}
+      <span className="deal-price">${Number(game.deal_price).toFixed(2)}</span>
+      {onSale && game.deal_regular != null && (
+        <span className="deal-regular">${Number(game.deal_regular).toFixed(2)}</span>
+      )}
+    </span>
+  );
+  return game.deal_url ? (
+    <a href={game.deal_url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+      {badge}
+    </a>
+  ) : badge;
+}
+
 // RateModal — full rating UI in a modal overlay
 // Supports precision toggle (¼ star / ½ star) for fine-grained ratings.
 function RateModal({ game, currentRating, onClose, onSaved }) {
@@ -219,7 +241,7 @@ function useLibrary(version) {
       setLoading(true);
       const { data } = await supabase
         .from("library_entries")
-        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,rating:ratings(score,status))")
+        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,deal_price,deal_regular,deal_cut,deal_shop,deal_url,rating:ratings(score,status))")
         .order("playtime_forever", { ascending: false });
       const norm = (data || []).map((r) => ({
         ...r,
@@ -264,7 +286,7 @@ function useWishlist(version) {
     (async () => {
       const { data } = await supabase
         .from("ratings")
-        .select("score,status,game:games(id,rawg_id,title,cover_url,rawg_rating,genres,released,steam_appid)")
+        .select("score,status,game:games(id,rawg_id,title,cover_url,rawg_rating,genres,released,steam_appid,deal_price,deal_regular,deal_cut,deal_shop,deal_url)")
         .eq("status", "wishlist")
         .eq("user_id", "me")
         .order("updated_at", { ascending: false });
@@ -371,6 +393,41 @@ function SyncButton({ onDone, compact }) {
   );
 }
 
+// ----------------------------------------------------------- sync deals button
+// Separate from SyncButton (which runs sync-games) since deal data has its
+// own cadence and its own API quota — no need to hit ITAD on every library sync.
+function SyncDealsButton() {
+  const [state, setState] = useState("idle");
+  const [msg, setMsg] = useState("");
+
+  async function run() {
+    setState("running");
+    setMsg("Checking prices…");
+    const { data, error } = await supabase.functions.invoke("sync-deals", { method: "POST" });
+    if (error || data?.error) {
+      setState("error");
+      setMsg(data?.error || error?.message || "Deal sync failed.");
+      return;
+    }
+    setState("done");
+    setMsg(`${data.pricesUpdated ?? 0} prices · ${data.idsResolved ?? 0} newly matched · ${((data.ms ?? 0) / 1000).toFixed(1)}s`);
+  }
+
+  const label = state === "running" ? "Checking…" : state === "done" ? "Prices ✓" : "Prices";
+  return (
+    <div className="flex items-center gap-2">
+      {msg && (
+        <span className="text-[11px] font-mono-tech hidden sm:inline"
+          style={{color: state === "error" ? 'var(--danger)' : 'var(--text-muted)'}}>{msg}</span>
+      )}
+      <button onClick={run} disabled={state === "running"} className={`cyber-btn flex items-center gap-1.5 px-3 py-2 rounded text-xs ${state === "running" ? "pulse-glow" : ""}`}
+        style={state === "error" ? {borderColor:'rgba(239,68,68,0.3)', color:'var(--danger)'} : state === "done" ? {borderColor:'rgba(34,197,94,0.3)', color:'var(--success)'} : {}}>
+        <span className="uppercase tracking-wider">{label}</span>
+      </button>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------- shell
 function TopNav({ onSyncDone }) {
   const link = ({ isActive }) =>
@@ -386,7 +443,10 @@ function TopNav({ onSyncDone }) {
       <NavLink to="/recommend" className={link}>Recommend</NavLink>
       <NavLink to="/wishlist" className={link}>Wishlist</NavLink>
       <NavLink to="/upcoming" className={link}>Upcoming</NavLink>
-      <div className="ml-auto"><SyncButton onDone={onSyncDone} /></div>
+      <div className="ml-auto flex items-center gap-2">
+        <SyncDealsButton />
+        <SyncButton onDone={onSyncDone} />
+      </div>
     </nav>
   );
 }
@@ -553,7 +613,7 @@ function Backlog({ version, onSyncDone }) {
   const refetch = useCallback(async () => {
     const { data } = await supabase
       .from("library_entries")
-      .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,rating:ratings(score,status))")
+      .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,deal_price,deal_regular,deal_cut,deal_shop,deal_url,rating:ratings(score,status))")
       .order("playtime_forever", { ascending: false });
     const norm = (data || []).map((r) => ({
       ...r,
@@ -628,6 +688,7 @@ function Backlog({ version, onSyncDone }) {
                       <span key={g} className="genre-tag">{g}</span>
                     ))}
                   </div>
+                  <div className="mt-1.5"><DealBadge game={r.game} /></div>
                   <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
                     <StarRating score={r.rating?.score || 0} onRate={(s) => quickRate(r.game.id, s)} />
                   </div>
@@ -897,6 +958,7 @@ function Wishlist({ version, onSyncDone }) {
                   {r.game.rawg_rating && (
                     <div className="text-xs font-mono-tech mt-1" style={{color:'var(--success)'}}>★ {r.game.rawg_rating}</div>
                   )}
+                  <div className="mt-1.5"><DealBadge game={r.game} /></div>
                   <button
                     onClick={() => removeWishlist(r.game.id)}
                     className="wishlist-add-btn mt-1.5"
