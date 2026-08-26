@@ -43,69 +43,171 @@ function json(body: unknown, status = 200) {
 
 // ----------------------------------------------------------------- Steam
 // Returns { items, status, error } so the caller can surface diagnostics.
+// Tries multiple approaches since Steam's wishlist APIs are finicky:
+//   1. IWishlistService/GetWishlist WITHOUT key (public endpoint, steamid only)
+//   2. IWishlistService/GetWishlist WITH key
+//   3. HTML scraping of the store wishlist page (extracts appids from script tags)
+// Then resolves titles via IStoreBrowseService/GetItems (batch) with appdetails fallback.
 async function steamWishlist(): Promise<{ items: { appid: number; title: string }[]; status: string; error: string }> {
   const steamId = Deno.env.get("STEAM_ID")!;
   const key = Deno.env.get("STEAM_API_KEY")!;
-  const out: { appid: number; title: string }[] = [];
+  let appids: number[] = [];
+  let method = "";
 
-  // Approach 1: legacy wishlistdata (rich JSON in one call)
-  // DEPRECATED Nov 2024 — now redirects to store HTML. We still try it
-  // in case it comes back or works from certain IPs.
-  try {
-    const r = await fetch(
-      `https://store.steampowered.com/wishlist/profiles/${steamId}/wishlistdata/?p=0`,
-      { redirect: "manual", headers: {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept": "application/json,text/html",
-        "Accept-Language": "en-US,en;q=0.9",
-      } },
-    );
-    // 200 + JSON body = success; 3xx = redirect (deprecated); anything else = fail
-    if (r.ok) {
-      const text = await r.text();
-      if (text.trim().startsWith("{")) {
-        const data = JSON.parse(text);
-        for (const [appid, g] of Object.entries(data)) {
-          if ((g as any).subs?.length > 0) out.push({ appid: Number(appid), title: (g as any).name });
-        }
-        if (out.length) return { items: out, status: "wishlistdata", error: "" };
-      }
-    }
-  } catch { /* fall through to approach 2 */ }
+  // --- Get the raw appids via multiple strategies ---
 
-  // Approach 2: IWishlistService/GetWishlist (official API, returns appids only)
-  // Then call store/appdetails for each title (capped, with delay).
+  // Strategy 1: IWishlistService/GetWishlist WITHOUT a key
+  // The xPaw docs and working gist examples show this works with just steamid.
+  // Passing a non-publisher key may cause Steam to return an empty response.
   try {
     const u = new URL("https://api.steampowered.com/IWishlistService/GetWishlist/v1/");
-    u.searchParams.set("key", key);
     u.searchParams.set("steamid", steamId);
     const r = await fetch(u);
-    if (!r.ok) {
-      const body = await r.text().catch(() => "");
-      return { items: [], status: "error", error: `IWishlistService HTTP ${r.status}: ${body.slice(0, 200)}` };
+    console.log(`[wishlist] Strategy 1 (no key): HTTP ${r.status}`);
+    if (r.ok) {
+      const json = await r.json();
+      const items = json?.response?.wishlist || [];
+      console.log(`[wishlist] Strategy 1 items: ${items.length}`);
+      if (items.length) {
+        appids = items.map((i: any) => i.appid).filter(Boolean);
+        method = "api-no-key";
+      }
     }
-    const json = await r.json();
-    const items = json?.response?.wishlist || [];
-    if (!items.length) {
-      return { items: [], status: "empty", error: "IWishlistService returned 0 items (wishlist may be private or empty)" };
-    }
-    for (const item of items.slice(0, 50)) {
-      if (!item.appid) continue;
-      let title = `Steam App ${item.appid}`;
-      try {
-        await sleep(200);
-        const ar = await fetch(`https://store.steampowered.com/api/appdetails?appids=${item.appid}&l=english`);
-        if (ar.ok) {
-          const ad = (await ar.json())[String(item.appid)];
-          if (ad?.success && ad?.data?.name) title = ad.data.name;
+  } catch (e) { console.log(`[wishlist] Strategy 1 error: ${e}`); }
+
+  // Strategy 2: IWishlistService/GetWishlist WITH key
+  if (!appids.length) {
+    try {
+      const u = new URL("https://api.steampowered.com/IWishlistService/GetWishlist/v1/");
+      u.searchParams.set("key", key);
+      u.searchParams.set("steamid", steamId);
+      const r = await fetch(u);
+      console.log(`[wishlist] Strategy 2 (with key): HTTP ${r.status}`);
+      if (r.ok) {
+        const json = await r.json();
+        const items = json?.response?.wishlist || [];
+        console.log(`[wishlist] Strategy 2 items: ${items.length}`);
+        if (items.length) {
+          appids = items.map((i: any) => i.appid).filter(Boolean);
+          method = "api-with-key";
         }
-      } catch { /* keep placeholder title */ }
-      out.push({ appid: item.appid, title });
-    }
-    return { items: out, status: "IWishlistService", error: "" };
-  } catch (e) {
-    return { items: [], status: "error", error: `steamWishlist exception: ${String(e?.message || e)}` };
+      } else {
+        console.log(`[wishlist] Strategy 2 body: ${(await r.text().catch(() => "")).slice(0, 300)}`);
+      }
+    } catch (e) { console.log(`[wishlist] Strategy 2 error: ${e}`); }
   }
+
+  // Strategy 3: HTML scraping of the store wishlist page
+  // The page embeds appids in data attributes and script tags.
+  if (!appids.length) {
+    try {
+      const r = await fetch(
+        `https://store.steampowered.com/wishlist/profiles/${steamId}/`,
+        { headers: {
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Cookie": "birthtime=315532800; mature_content=1",
+        } },
+      );
+      console.log(`[wishlist] Strategy 3 (HTML scrape): HTTP ${r.status}`);
+      if (r.ok) {
+        const html = await r.text();
+        // Pattern 1: data-appid="12345"
+        const matches1 = [...html.matchAll(/data-appid="(\d+)"/g)];
+        // Pattern 2: "appid":12345 in embedded JSON
+        const matches2 = [...html.matchAll(/"appid":(\d+)/g)];
+        const found = matches1.length >= matches2.length ? matches1 : matches2;
+        console.log(`[wishlist] Strategy 3 matches: ${found.length}`);
+        if (found.length) {
+          appids = found.map((m) => Number(m[1]));
+          method = "html-scrape";
+        }
+      }
+    } catch (e) { console.log(`[wishlist] Strategy 3 error: ${e}`); }
+  }
+
+  if (!appids.length) {
+    return {
+      items: [],
+      status: "empty",
+      error: "All 3 wishlist strategies returned 0 items. Ensure Steam profile > Privacy > 'Game details' is Public, wait 2 min, retry.",
+    };
+  }
+
+  console.log(`[wishlist] Got ${appids.length} appids via ${method}, resolving titles...`);
+
+  // --- Resolve appids to titles ---
+  // Primary: IStoreBrowseService/GetItems (batch, up to 50 in one call)
+  // Fallback: store/appdetails (one at a time, 200ms delay)
+  const out: { appid: number; title: string }[] = [];
+  const capped = appids.slice(0, 50);
+
+  try {
+    const u = new URL("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/");
+    u.searchParams.set("key", key);
+    const r = await fetch(u, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        input_json: JSON.stringify({
+          ids: capped.map((a) => ({ appid: a })),
+          context: { language: "english", country_code: "US" },
+          data_request: { include_app_basic_info: true },
+        }),
+      }),
+    });
+    console.log(`[wishlist] GetItems: HTTP ${r.status}`);
+    if (r.ok) {
+      const json = await r.json();
+      const storeItems = json?.response?.store_items || [];
+      for (const si of storeItems) {
+        if (si?.appid && si?.name) {
+          out.push({ appid: si.appid, title: si.name });
+        }
+      }
+      // Fill any missing titles with appdetails fallback
+      const resolved = new Set(out.map((o) => o.appid));
+      for (const appid of capped) {
+        if (!resolved.has(appid)) {
+          try {
+            await sleep(200);
+            const ar = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&l=english`);
+            if (ar.ok) {
+              const ad = (await ar.json())[String(appid)];
+              if (ad?.success && ad?.data?.name) {
+                out.push({ appid, title: ad.data.name });
+              } else {
+                out.push({ appid, title: `Steam App ${appid}` });
+              }
+            } else {
+              out.push({ appid, title: `Steam App ${appid}` });
+            }
+          } catch {
+            out.push({ appid, title: `Steam App ${appid}` });
+          }
+        }
+      }
+      return { items: out, status: method + "+GetItems", error: "" };
+    }
+  } catch (e) {
+    console.log(`[wishlist] GetItems error: ${e}`);
+  }
+
+  // Fallback: appdetails one-by-one
+  for (const appid of capped) {
+    let title = `Steam App ${appid}`;
+    try {
+      await sleep(200);
+      const ar = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&l=english`);
+      if (ar.ok) {
+        const ad = (await ar.json())[String(appid)];
+        if (ad?.success && ad?.data?.name) title = ad.data.name;
+      }
+    } catch { /* keep placeholder */ }
+    out.push({ appid, title });
+  }
+  return { items: out, status: method + "+appdetails", error: "" };
 }
 
 async function steamLibrary() {
