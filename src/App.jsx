@@ -688,7 +688,6 @@ function Backlog({ version, onSyncDone }) {
                       <span key={g} className="genre-tag">{g}</span>
                     ))}
                   </div>
-                  <div className="mt-1.5"><DealBadge game={r.game} /></div>
                   <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
                     <StarRating score={r.rating?.score || 0} onRate={(s) => quickRate(r.game.id, s)} />
                   </div>
@@ -910,20 +909,30 @@ function AddGameSearch({ onAdded }) {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [added, setAdded] = useState({});
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (query.trim().length < 2) { setResults([]); return; }
+    if (query.trim().length < 2) { setResults([]); setError(""); return; }
     const key = import.meta.env.VITE_RAWG_API_KEY;
-    if (!key) { console.warn("VITE_RAWG_API_KEY is not set — game search is disabled."); return; }
+    if (!key) {
+      setError("VITE_RAWG_API_KEY is not set in the build — see deploy.yml.");
+      return;
+    }
     const t = setTimeout(async () => {
       setSearching(true);
+      setError("");
       try {
         const url = `https://api.rawg.io/api/games?key=${key}&search=${encodeURIComponent(query)}&page_size=8`;
         const r = await fetch(url);
+        if (!r.ok) {
+          const body = await r.text().catch(() => "");
+          throw new Error(`RAWG returned ${r.status}: ${body.slice(0, 200)}`);
+        }
         const j = await r.json();
         setResults(j.results || []);
-      } catch {
+      } catch (e) {
         setResults([]);
+        setError(e?.message || "Search failed — check the browser console for details.");
       } finally {
         setSearching(false);
       }
@@ -954,6 +963,7 @@ function AddGameSearch({ onAdded }) {
       <input value={query} onChange={(e) => setQuery(e.target.value)}
         placeholder="Search any released game…" className="cyber-input w-full" />
       {searching && <p className="text-[11px] font-mono-tech mt-2" style={{color:'var(--text-muted)'}}>Searching…</p>}
+      {error && <p className="text-[11px] font-mono-tech mt-2" style={{color:'var(--danger)'}}>{error}</p>}
       {results.length > 0 && (
         <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
           {results.map((g) => (

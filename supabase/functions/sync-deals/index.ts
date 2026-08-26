@@ -1,18 +1,22 @@
 // ============================================================
 // supabase/functions/sync-deals/index.ts  (Deno / Edge Function)
-// Populates price/discount data from IsThereAnyDeal for any game
-// that has a steam_appid. Two phases:
-//   1. Resolve steam_appid -> itad_id for games that don't have one yet
-//      via POST /lookup/id/shop/61/v1 (shop 61 = Steam)
-//   2. Fetch current price + historical low for all games with an
-//      itad_id via POST /games/overview/v2, and write it back.
+// Populates price/discount data from IsThereAnyDeal for games
+// currently on your WISHLIST only (ratings.status = 'wishlist')
+// — no point pricing games you already own.
+//
+// Two phases:
+//   1. Resolve wishlisted games -> itad_id.
+//      - If the game has a steam_appid: POST /lookup/id/shop/61/v1
+//      - Otherwise (e.g. added via the RAWG search box): fall back to
+//        POST /lookup/id/title/v1, matching on title.
+//   2. Fetch current price + historical low for all wishlisted games
+//      with an itad_id via POST /games/overview/v2, and write it back.
 //
 //   GET  /functions/v1/sync-deals  -> debug: shows which secrets are set
 //   POST /functions/v1/sync-deals  -> run the sync, return a summary
 //
 // Secrets (in addition to the ones sync-games already uses):
 //   supabase secrets set ITAD_API_KEY=...
-// Get a key at https://isthereanydeal.com/apps/my/ (free, register an app).
 //
 // Deploy:
 //   supabase functions deploy sync-deals --no-verify-jwt
@@ -27,7 +31,6 @@ const h = (extra: Record<string, string> = {}) => ({
   "Content-Type": "application/json",
   ...extra,
 });
-const UPSERT = { Prefer: "resolution=merge-duplicates,return=representation" };
 const now = () => new Date().toISOString();
 
 const CORS: Record<string, string> = {
@@ -46,9 +49,8 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 // ------------------------------------------------------------ ITAD lookup
-// Resolve Steam appids -> ITAD game IDs. Games table stores steam_appid as
-// an integer; ITAD wants "app/<appid>" as the shop-id format.
-async function resolveItadIds(games: { id: string; steam_appid: number }[]) {
+// Resolve Steam appids -> ITAD game IDs (shop 61 = Steam).
+async function resolveByAppid(games: { id: string; steam_appid: number }[]) {
   const resolved: { id: string; itad_id: string }[] = [];
   for (const batch of chunk(games, 200)) {
     const shopIds = batch.map((g) => `app/${g.steam_appid}`);
@@ -57,10 +59,32 @@ async function resolveItadIds(games: { id: string; steam_appid: number }[]) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(shopIds),
     });
-    if (!r.ok) { console.log(`[deals] lookup HTTP ${r.status}: ${await r.text().catch(() => "")}`); continue; }
+    if (!r.ok) { console.log(`[deals] shop lookup HTTP ${r.status}: ${await r.text().catch(() => "")}`); continue; }
     const map = await r.json(); // { "app/220": "018d...", "app/730": null, ... }
     for (const g of batch) {
       const itadId = map[`app/${g.steam_appid}`];
+      if (itadId) resolved.push({ id: g.id, itad_id: itadId });
+    }
+  }
+  return resolved;
+}
+
+// Fallback for wishlist games with no steam_appid (e.g. added via the RAWG
+// search box) — match by exact title instead. Less reliable than appid
+// matching (typos/variations won't match), but better than nothing.
+async function resolveByTitle(games: { id: string; title: string }[]) {
+  const resolved: { id: string; itad_id: string }[] = [];
+  for (const batch of chunk(games, 200)) {
+    const titles = batch.map((g) => g.title);
+    const r = await fetch(`https://api.isthereanydeal.com/lookup/id/title/v1?key=${ITAD_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(titles),
+    });
+    if (!r.ok) { console.log(`[deals] title lookup HTTP ${r.status}: ${await r.text().catch(() => "")}`); continue; }
+    const map = await r.json(); // { "Baldurs Gate 3": "018d...", "Unknown game": null }
+    for (const g of batch) {
+      const itadId = map[g.title];
       if (itadId) resolved.push({ id: g.id, itad_id: itadId });
     }
   }
@@ -104,27 +128,34 @@ Deno.serve(async (req) => {
   try {
     if (!ITAD_KEY) throw new Error("Missing env ITAD_API_KEY");
 
-    // Phase 1: resolve itad_id for any Steam game that doesn't have one yet
+    // Phase 1: resolve itad_id for wishlisted games that don't have one yet.
+    // ratings!inner(...) restricts the join to games that actually have a
+    // wishlist rating row — this is what scopes the whole sync to Wishlist.
     const needsLookup = await fetch(
-      REST("games?steam_appid=not.is.null&itad_id=is.null&select=id,steam_appid"),
+      REST("games?select=id,title,steam_appid,ratings!inner(status)&ratings.status=eq.wishlist&itad_id=is.null"),
       { headers: h() },
     ).then((r) => r.json());
 
+    const withAppid = (needsLookup || []).filter((g: any) => g.steam_appid != null);
+    const withoutAppid = (needsLookup || []).filter((g: any) => g.steam_appid == null);
+
+    const resolved = [
+      ...(withAppid.length ? await resolveByAppid(withAppid) : []),
+      ...(withoutAppid.length ? await resolveByTitle(withoutAppid) : []),
+    ];
     let idsResolved = 0;
-    if (needsLookup.length) {
-      const resolved = await resolveItadIds(needsLookup);
-      for (const g of resolved) {
-        await fetch(REST(`games?id=eq.${g.id}`), {
-          method: "PATCH", headers: h({ Prefer: "return=minimal" }),
-          body: JSON.stringify({ itad_id: g.itad_id, updated_at: now() }),
-        });
-        idsResolved++;
-      }
+    for (const g of resolved) {
+      await fetch(REST(`games?id=eq.${g.id}`), {
+        method: "PATCH", headers: h({ Prefer: "return=minimal" }),
+        body: JSON.stringify({ itad_id: g.itad_id, updated_at: now() }),
+      });
+      idsResolved++;
     }
 
-    // Phase 2: fetch current price + historical low for everything with an itad_id
+    // Phase 2: fetch current price + historical low for wishlisted games
+    // that now have an itad_id.
     const withItad = await fetch(
-      REST("games?itad_id=not.is.null&select=id,itad_id"),
+      REST("games?select=id,itad_id,ratings!inner(status)&ratings.status=eq.wishlist&itad_id=not.is.null"),
       { headers: h() },
     ).then((r) => r.json());
 
@@ -156,7 +187,7 @@ Deno.serve(async (req) => {
       ms: Date.now() - t0,
       idsResolved,
       pricesUpdated,
-      totalTracked: withItad.length,
+      totalWishlistTracked: withItad.length,
     });
   } catch (e) {
     return json({ ok: false, error: String((e as any)?.message || e) }, 500);
