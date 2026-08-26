@@ -10,8 +10,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { HashRouter, Routes, Route, NavLink, Link } from "react-router-dom";
 import { createClient } from "@supabase/supabase-js";
 import {
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid,
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
 } from "recharts";
 
 const supabase = createClient(
@@ -428,6 +427,33 @@ function Layout({ onSyncDone, children }) {
 }
 
 // -------------------------------------------------------------------- Home
+function MostPlayedGrid({ rows }) {
+  const top = rows.slice(0, 5).filter((r) => r.game);
+  if (!top.length) return null;
+  return (
+    <div className="mb-6">
+      <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>Most Played</h2>
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 sm:gap-4">
+        {top.map((r, i) => (
+          <div key={r.game.id} className="mp-card">
+            <div className="mp-cover-wrap">
+              <GameImg src={r.game.cover_url} className="w-full h-full object-cover" />
+              <span className="mp-rank">{i + 1}</span>
+            </div>
+            <div className="mp-info">
+              <div className="mp-title">{r.game.title}</div>
+              <div className="mp-meta">
+                <span>{fmtHours(r.playtime_forever || 0)}</span>
+                {r.rating?.score > 0 && <span className="mp-stars">★ {fmtScore(r.rating.score)}</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StatCard({ label, value, sub, accent }) {
   return (
     <div className="hud-card rounded-lg p-4 sm:p-5">
@@ -471,33 +497,21 @@ function Home({ version, onSyncDone }) {
           <StatCard label="Avg Rating" value={stats.avg} sub="your ratings" />
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="cyber-panel rounded-lg p-4 sm:p-5">
-            <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>Genre Distribution</h2>
-            {stats.genres.length ? (
-              <ResponsiveContainer width="100%" height={240}>
-                <PieChart>
-                  <Pie data={stats.genres.map(([name, value]) => ({ name, value }))}
-                    dataKey="value" nameKey="name" outerRadius={80} innerRadius={40} label>
-                    {stats.genres.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : <p className="text-sm font-mono-tech" style={{color:'var(--text-muted)'}}>No data — run sync</p>}
-          </div>
-          <div className="cyber-panel rounded-lg p-4 sm:p-5">
-            <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>Most Played</h2>
+        <MostPlayedGrid rows={rows} />
+
+        <div className="cyber-panel rounded-lg p-4 sm:p-5">
+          <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>Genre Distribution</h2>
+          {stats.genres.length ? (
             <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={rows.slice(0, 6).map((r) => ({ name: r.game?.title?.slice(0, 12), hours: +(r.playtime_forever / 60).toFixed(1) }))} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,240,255,0.06)" />
-                <XAxis type="number" stroke="rgba(0,240,255,0.3)" tick={{ fontFamily: 'Share Tech Mono', fontSize: 10 }} />
-                <YAxis type="category" dataKey="name" stroke="rgba(0,240,255,0.3)" width={80} tick={{ fontFamily: 'Share Tech Mono', fontSize: 10 }} />
-                <Bar dataKey="hours" fill="#f97316" radius={[0, 4, 4, 0]} />
+              <PieChart>
+                <Pie data={stats.genres.map(([name, value]) => ({ name, value }))}
+                  dataKey="value" nameKey="name" outerRadius={80} innerRadius={40} label>
+                  {stats.genres.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                </Pie>
                 <Tooltip />
-              </BarChart>
+              </PieChart>
             </ResponsiveContainer>
-          </div>
+          ) : <p className="text-sm font-mono-tech" style={{color:'var(--text-muted)'}}>No data — run sync</p>}
         </div>
       </div>
     </Layout>
