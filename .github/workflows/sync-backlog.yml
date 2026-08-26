@@ -3,21 +3,17 @@
 # This does NOT sync data — the "Sync now" button on the page calls a
 # Supabase Edge Function for that. No schedule, no secrets, no PAT.
 name: Deploy site
-
 on:
   push:
     branches: [main]
   workflow_dispatch: {}
-
 permissions:
   contents: read
   pages: write
   id-token: write
-
 concurrency:
   group: deploy-site
   cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,10 +26,10 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          VITE_RAWG_API_KEY: ${{ vars.VITE_RAWG_API_KEY }}
           VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || '/' }}
       - uses: actions/upload-pages-artifact@v3
         with: { path: dist }
-
   deploy:
     needs: build
     runs-on: ubuntu-latest

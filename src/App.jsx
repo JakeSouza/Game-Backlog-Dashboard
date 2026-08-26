@@ -899,8 +899,91 @@ function Upcoming({ version, onSyncDone }) {
 }
 
 // ------------------------------------------------------------- Wishlist
+// AddGameSearch — searches RAWG directly for any released game (not just
+// ones already in Upcoming/Discover) and adds it to the wishlist via the
+// existing addToWishlist() helper. Debounced so it doesn't fire on every
+// keystroke. Uses import.meta.env.VITE_RAWG_API_KEY, which must be set as
+// a GitHub Actions build variable (see deploy.yml) — this key ends up in
+// the public JS bundle, same as VITE_SUPABASE_ANON_KEY already does.
+function AddGameSearch({ onAdded }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [added, setAdded] = useState({});
+
+  useEffect(() => {
+    if (query.trim().length < 2) { setResults([]); return; }
+    const key = import.meta.env.VITE_RAWG_API_KEY;
+    if (!key) { console.warn("VITE_RAWG_API_KEY is not set — game search is disabled."); return; }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const url = `https://api.rawg.io/api/games?key=${key}&search=${encodeURIComponent(query)}&page_size=8`;
+        const r = await fetch(url);
+        const j = await r.json();
+        setResults(j.results || []);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  async function handleAdd(g) {
+    setAdded((p) => ({ ...p, [g.id]: true }));
+    await addToWishlist({
+      id: null,
+      rawg_id: g.id,
+      title: g.name,
+      cover_url: g.background_image,
+      released: g.released,
+      genres: (g.genres || []).map((x) => x.name),
+      platforms: (g.platforms || []).map((x) => x.platform.name),
+      rawg_rating: g.rating,
+    });
+    onAdded?.();
+  }
+
+  return (
+    <div className="cyber-panel rounded-lg p-3 sm:p-4 mb-5">
+      <div className="text-[11px] font-mono-tech uppercase tracking-wider mb-2" style={{color:'var(--text-muted)'}}>
+        Add a game to your wishlist
+      </div>
+      <input value={query} onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search any released game…" className="cyber-input w-full" />
+      {searching && <p className="text-[11px] font-mono-tech mt-2" style={{color:'var(--text-muted)'}}>Searching…</p>}
+      {results.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {results.map((g) => (
+            <div key={g.id} className="game-card rounded-lg overflow-hidden">
+              <div className="card-img-wrap">
+                <img src={g.background_image || FALLBACK} alt="" className="w-full h-20 object-cover" loading="lazy" />
+              </div>
+              <div className="p-2">
+                <div className="text-[11px] font-display font-bold truncate">{g.name}</div>
+                <div className="text-[10px] font-mono-tech mt-0.5" style={{color:'var(--text-muted)'}}>
+                  {g.released ? new Date(g.released).getFullYear() : ''}
+                </div>
+                <button
+                  onClick={() => handleAdd(g)}
+                  className={`wishlist-add-btn mt-1.5 ${added[g.id] ? 'added' : ''}`}
+                >
+                  {added[g.id] ? '✓ Wishlisted' : '+ Wishlist'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Wishlist({ version, onSyncDone }) {
-  const rows = useWishlist(version);
+  const [wlVersion, setWlVersion] = useState(0);
+  const rows = useWishlist(`${version}:${wlVersion}`);
   const [q, setQ] = useState("");
 
   const filtered = useMemo(() => {
@@ -921,6 +1004,8 @@ function Wishlist({ version, onSyncDone }) {
           {filtered.length} games · synced from Steam + manually added
         </p>
         <div className="scan-bar mb-5" />
+
+        <AddGameSearch onAdded={() => setWlVersion((v) => v + 1)} />
 
         <div className="flex gap-2 mb-5">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
