@@ -875,9 +875,6 @@ function Upcoming({ version, onSyncDone }) {
                       ))}
                     </div>
                     <div className="flex items-center justify-between mt-1.5">
-                      {r.rawg_rating && (
-                        <div className="text-xs font-mono-tech" style={{color:'var(--success)'}}>★ {r.rawg_rating}</div>
-                      )}
                       <button
                         onClick={(e) => { e.stopPropagation(); if (!isWishlisted) handleAdd(r, e); }}
                         className={`wishlist-add-btn ${isWishlisted ? 'added' : ''}`}
@@ -1050,9 +1047,6 @@ function Wishlist({ version, onSyncDone }) {
                       <span key={g} className="genre-tag">{g}</span>
                     ))}
                   </div>
-                  {r.game.rawg_rating && (
-                    <div className="text-xs font-mono-tech mt-1" style={{color:'var(--success)'}}>★ {r.game.rawg_rating}</div>
-                  )}
                   <div className="mt-1.5"><DealBadge game={r.game} /></div>
                   <button
                     onClick={() => removeWishlist(r.game.id)}
