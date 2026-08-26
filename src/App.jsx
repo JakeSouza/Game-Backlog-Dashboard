@@ -31,8 +31,12 @@ function proxied(u) {
   return `https://wsrv.nl/?url=${encodeURIComponent(u)}&w=420&h=300&fit=cover&a=attention&q=80`;
 }
 
-function GameImg({ src, alt = "", className }) {
-  const stages = [proxied(src), FALLBACK];
+function GameImg({ src, steamAppid, alt = "", className }) {
+  const stages = [
+    steamAppid ? `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppid}/library_600x900.jpg` : null,
+    proxied(src),
+    FALLBACK,
+  ].filter(Boolean);
   const [idx, setIdx] = useState(0);
   return (
     <img src={stages[idx]} alt={alt} className={className}
@@ -134,7 +138,7 @@ function RateModal({ game, currentRating, onClose, onSaved }) {
     <div className="rate-modal-overlay" onClick={onClose}>
       <div className="rate-modal fade-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex gap-3 mb-4">
-          <GameImg src={game.cover_url} className="w-16 h-20 rounded object-cover flex-shrink-0" />
+          <GameImg src={game.cover_url} steamAppid={game.steam_appid} className="w-16 h-20 rounded object-cover flex-shrink-0" />
           <div className="min-w-0">
             <div className="font-display font-bold text-sm truncate" style={{color:'var(--text)'}}>{game.title}</div>
             {game.released && <div className="text-[11px] font-mono-tech">{new Date(game.released).getFullYear()}</div>}
@@ -215,7 +219,7 @@ function useLibrary(version) {
       setLoading(true);
       const { data } = await supabase
         .from("library_entries")
-        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,rating:ratings(score,status))")
+        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,rating:ratings(score,status))")
         .order("playtime_forever", { ascending: false });
       const norm = (data || []).map((r) => ({
         ...r,
@@ -260,7 +264,7 @@ function useWishlist(version) {
     (async () => {
       const { data } = await supabase
         .from("ratings")
-        .select("score,status,game:games(id,rawg_id,title,cover_url,rawg_rating,genres,released)")
+        .select("score,status,game:games(id,rawg_id,title,cover_url,rawg_rating,genres,released,steam_appid)")
         .eq("status", "wishlist")
         .eq("user_id", "me")
         .order("updated_at", { ascending: false });
@@ -437,7 +441,7 @@ function MostPlayedGrid({ rows }) {
         {top.map((r, i) => (
           <div key={r.game.id} className="mp-card">
             <div className="mp-cover-wrap">
-              <GameImg src={r.game.cover_url} className="w-full h-full object-cover" />
+              <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-full object-cover" />
               <span className="mp-rank">{i + 1}</span>
             </div>
             <div className="mp-info">
@@ -549,7 +553,7 @@ function Backlog({ version, onSyncDone }) {
   const refetch = useCallback(async () => {
     const { data } = await supabase
       .from("library_entries")
-      .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,rating:ratings(score,status))")
+      .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,rating:ratings(score,status))")
       .order("playtime_forever", { ascending: false });
     const norm = (data || []).map((r) => ({
       ...r,
@@ -609,7 +613,7 @@ function Backlog({ version, onSyncDone }) {
               <div key={r.game.id} className="game-card rounded-lg overflow-hidden cursor-pointer"
                    onClick={() => setRateGame({ game: r.game, rating: r.rating })}>
                 <div className="card-img-wrap">
-                  <GameImg src={r.game.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+                  <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-28 sm:h-36 object-cover" />
                   {r.rating?.status && (
                     <div className="absolute top-1.5 right-1.5 z-10">
                       <StatusBadge status={r.rating.status} />
@@ -871,7 +875,7 @@ function Wishlist({ version, onSyncDone }) {
             {filtered.map((r) => (
               <div key={r.game.id} className="game-card rounded-lg overflow-hidden">
                 <div className="card-img-wrap">
-                  <GameImg src={r.game.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+                  <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-28 sm:h-36 object-cover" />
                   <div className="absolute top-1.5 right-1.5 z-10">
                     <StatusBadge status="wishlist" />
                   </div>

@@ -251,6 +251,15 @@ body {
   font-family: 'JetBrains Mono', monospace !important;
   font-size: 11px !important;
 }
+.recharts-tooltip-wrapper .recharts-tooltip-label {
+  color: var(--text) !important;
+}
+.recharts-tooltip-wrapper .recharts-tooltip-item,
+.recharts-tooltip-wrapper .recharts-tooltip-item-name,
+.recharts-tooltip-wrapper .recharts-tooltip-item-separator,
+.recharts-tooltip-wrapper .recharts-tooltip-item-value {
+  color: var(--text) !important;
+}
 
 /* ============================================================
    STAR RATING
