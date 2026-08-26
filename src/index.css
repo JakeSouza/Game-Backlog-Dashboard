@@ -3,30 +3,32 @@
 @tailwind utilities;
 
 /* ============================================================
-   ONYX THEME — dark, sleek, restrained.
-   Monochrome base with a single warm accent (orange).
-   No neon, no glow, no animated backgrounds.
-   Clean typography, sharp 1px borders, subtle transitions.
+   NEO-KYOTO NEON THEME — wet-pavement night market.
+   Deep indigo base, magenta/cyan duotone glow used as a reward
+   accent (hover, ratings, primary actions) — not everywhere.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 :root {
-  --bg: #0a0a0b;
-  --bg-elevated: #131316;
-  --bg-hover: #1c1c22;
-  --border: rgba(255,255,255,0.06);
-  --border-hover: rgba(255,255,255,0.14);
-  --text: #e4e4e7;
-  --text-muted: #71717a;
-  --text-dim: #3f3f46;
-  --accent: #f97316;
-  --accent-hover: #ea580c;
-  --accent-dim: rgba(249,115,22,0.08);
-  --accent-border: rgba(249,115,22,0.25);
-  --success: #22c55e;
-  --danger: #ef4444;
-  --warning: #eab308;
+  --bg: #0b0a14;
+  --bg-elevated: #14121f;
+  --bg-hover: #1d1a2e;
+  --border: rgba(255,255,255,0.1);
+  --border-hover: rgba(255,255,255,0.2);
+  --text: #e8e6f5;
+  --text-muted: #8b87a8;
+  --text-dim: #4a4666;
+  --accent: #ff2e8f;
+  --accent-hover: #ff5aa5;
+  --accent-dim: rgba(255,46,143,0.1);
+  --accent-border: rgba(255,46,143,0.35);
+  --accent-2: #22e5ff;
+  --accent-2-dim: rgba(34,229,255,0.1);
+  --accent-2-border: rgba(34,229,255,0.35);
+  --success: #39ff9c;
+  --danger: #ff3860;
+  --warning: #ffd93d;
 }
 
 * {
@@ -42,24 +44,25 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---- background: subtle vignette only, no grid ---- */
+/* ---- background: dual-glow vignette, magenta top-left / cyan bottom-right ---- */
 .cyber-bg {
   position: fixed;
   inset: 0;
   z-index: 0;
   background:
-    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(249,115,22,0.03), transparent 70%),
+    radial-gradient(ellipse 70% 45% at 15% 0%, rgba(255,46,143,0.06), transparent 70%),
+    radial-gradient(ellipse 70% 45% at 100% 100%, rgba(34,229,255,0.05), transparent 70%),
     var(--bg);
 }
 
 /* ---- typography ---- */
-.font-display { font-family: 'Inter', sans-serif; letter-spacing: -0.02em; }
+.font-display { font-family: 'Rajdhani', sans-serif; font-weight: 700; letter-spacing: 0.01em; }
 .font-mono-tech { font-family: 'JetBrains Mono', monospace; }
 .font-body { font-family: 'Inter', sans-serif; }
 
 /* ---- accent text ---- */
-.neon-text-cyan { color: var(--accent); }
-.neon-text-magenta { color: var(--danger); }
+.neon-text-cyan { color: var(--accent-2); }
+.neon-text-magenta { color: var(--accent); }
 .neon-text-lime { color: var(--success); }
 .neon-text-purple { color: #a78bfa; }
 
@@ -84,12 +87,22 @@ body {
   color: var(--accent);
   background: var(--accent-dim);
 }
+.cyber-btn.primary {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-dim);
+  text-shadow: 0 0 10px rgba(255,46,143,0.5);
+}
+.cyber-btn.primary:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 16px rgba(255,46,143,0.25);
+}
 
 /* ---- nav active ---- */
 .cyber-nav-active {
   color: var(--text) !important;
   background: var(--bg-hover);
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent-2-border);
 }
 
 /* ---- game card ---- */
@@ -97,13 +110,14 @@ body {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 8px;
-  transition: border-color 0.2s, transform 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
   position: relative;
   overflow: hidden;
 }
 .game-card:hover {
-  border-color: var(--border-hover);
-  transform: translateY(-1px);
+  border-color: var(--accent-2-border);
+  box-shadow: 0 0 18px rgba(34,229,255,0.1);
+  transform: translateY(-2px);
 }
 .game-card .card-img-wrap {
   position: relative;
@@ -119,7 +133,7 @@ body {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, transparent 60%, rgba(10,10,11,0.7) 100%);
+  background: linear-gradient(180deg, transparent 55%, rgba(11,10,20,0.85) 100%);
   pointer-events: none;
 }
 
@@ -134,15 +148,15 @@ body {
 .hud-card::before {
   content: '';
   position: absolute;
-  top: 0; left: 0; right: 0; height: 1px;
-  background: var(--accent);
-  opacity: 0.4;
+  top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  opacity: 0.7;
 }
 .hud-value {
-  font-family: 'Inter', sans-serif;
-  font-weight: 900;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
   color: var(--text);
-  letter-spacing: -0.03em;
+  letter-spacing: 0.01em;
 }
 
 /* ---- genre tag ---- */
@@ -151,39 +165,40 @@ body {
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: rgba(255,255,255,0.04);
+  background: rgba(255,255,255,0.05);
   border: 1px solid var(--border);
   color: var(--text-muted);
   padding: 2px 6px;
   border-radius: 3px;
 }
 
-/* ---- glitch (kept but minimal: subtle text only, no animation) ---- */
+/* ---- glitch (subtle text only, no animation) ---- */
 .glitch {
   position: relative;
-  font-family: 'Inter', sans-serif;
-  letter-spacing: -0.03em;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 .glitch::before, .glitch::after { display: none; }
 
-/* ---- scanline bar (now a simple thin accent line) ---- */
+/* ---- scanline bar (thin dual-tone accent line) ---- */
 .scan-bar {
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border-hover), transparent);
+  background: linear-gradient(90deg, transparent, var(--accent-border), var(--accent-2-border), transparent);
 }
 
 /* ---- match score bar ---- */
 .match-bar {
   height: 3px;
-  background: rgba(255,255,255,0.04);
+  background: rgba(255,255,255,0.05);
   border-radius: 2px;
   overflow: hidden;
 }
 .match-bar-fill {
   height: 100%;
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
   border-radius: 2px;
-  opacity: 0.7;
+  opacity: 0.85;
 }
 
 /* ---- mobile bottom nav ---- */
@@ -191,7 +206,7 @@ body {
   position: fixed;
   bottom: 0; left: 0; right: 0;
   z-index: 50;
-  background: rgba(10,10,11,0.95);
+  background: rgba(11,10,20,0.95);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);
   display: flex;
@@ -212,6 +227,7 @@ body {
 }
 .bottom-nav a.active {
   color: var(--accent);
+  text-shadow: 0 0 8px rgba(255,46,143,0.5);
 }
 
 /* ---- input/select ---- */
@@ -227,7 +243,8 @@ body {
   outline: none;
 }
 .cyber-input:focus {
-  border-color: var(--accent-border);
+  border-color: var(--accent-2-border);
+  box-shadow: 0 0 0 3px var(--accent-2-dim);
 }
 
 /* ---- scrollbar ---- */
@@ -244,8 +261,8 @@ body {
 
 /* ---- pulse (sync running) ---- */
 @keyframes pulseGlow {
-  0%, 100% { border-color: var(--border); }
-  50% { border-color: var(--accent-border); }
+  0%, 100% { border-color: var(--border); box-shadow: none; }
+  50% { border-color: var(--accent-2-border); box-shadow: 0 0 12px rgba(34,229,255,0.15); }
 }
 .pulse-glow { animation: pulseGlow 1.5s ease-in-out infinite; }
 
@@ -284,6 +301,7 @@ body {
   color: var(--accent);
   pointer-events: none;
   transition: width 0.08s ease-out;
+  text-shadow: 0 0 6px rgba(255,46,143,0.45);
 }
 
 /* ============================================================
@@ -306,29 +324,29 @@ body {
   color: var(--text-dim);
 }
 .status-played {
-  border-color: rgba(34,197,94,0.2);
+  border-color: rgba(57,255,156,0.25);
   color: var(--success);
-  background: rgba(34,197,94,0.04);
+  background: rgba(57,255,156,0.06);
 }
 .status-playing {
-  border-color: var(--accent-border);
-  color: var(--accent);
-  background: var(--accent-dim);
+  border-color: var(--accent-2-border);
+  color: var(--accent-2);
+  background: var(--accent-2-dim);
 }
 .status-backlog {
-  border-color: rgba(167,139,250,0.2);
+  border-color: rgba(167,139,250,0.25);
   color: #a78bfa;
-  background: rgba(167,139,250,0.04);
+  background: rgba(167,139,250,0.06);
 }
 .status-wishlist {
-  border-color: rgba(234,179,8,0.2);
+  border-color: rgba(255,217,61,0.25);
   color: var(--warning);
-  background: rgba(234,179,8,0.04);
+  background: rgba(255,217,61,0.06);
 }
 .status-dropped {
-  border-color: rgba(239,68,68,0.2);
+  border-color: rgba(255,56,96,0.25);
   color: var(--danger);
-  background: rgba(239,68,68,0.04);
+  background: rgba(255,56,96,0.06);
 }
 .status-selector {
   display: flex;
@@ -344,7 +362,7 @@ body {
   opacity: 1;
 }
 .status-selector .status-tag:hover {
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 /* ============================================================
@@ -354,7 +372,7 @@ body {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(10,10,11,0.85);
+  background: rgba(11,10,20,0.88);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -390,13 +408,13 @@ body {
   gap: 4px;
 }
 .wishlist-add-btn:hover {
-  border-color: var(--accent-border);
-  color: var(--accent);
-  background: var(--accent-dim);
+  border-color: var(--warning);
+  color: var(--warning);
+  background: rgba(255,217,61,0.06);
 }
 .wishlist-add-btn.added {
-  border-color: rgba(234,179,8,0.2);
+  border-color: rgba(255,217,61,0.25);
   color: var(--warning);
-  background: rgba(234,179,8,0.04);
+  background: rgba(255,217,61,0.06);
   cursor: default;
 }
