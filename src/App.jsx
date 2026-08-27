@@ -302,12 +302,21 @@ function useWishlist(version) {
 // For upcoming/discovery games, a games row is created via rawg_id upsert.
 // Finds an existing games row by rawg_id, or creates one. Shared by
 // addToWishlist and addToBacklog so both stay in sync on how a game
-// gets created from search results.
+// gets created from search results. If game.steam_appid is provided
+// (e.g. typed in manually alongside a search result), it's written
+// even onto an already-existing row — Steam CDN art and price
+// tracking both depend on that column being populated.
 async function upsertGameByRawgId(game) {
   if (game.rawg_id) {
     const { data: existing } = await supabase
-      .from("games").select("id").eq("rawg_id", game.rawg_id).limit(1);
-    if (existing?.length) return existing[0].id;
+      .from("games").select("id,steam_appid").eq("rawg_id", game.rawg_id).limit(1);
+    if (existing?.length) {
+      const gameId = existing[0].id;
+      if (game.steam_appid && existing[0].steam_appid !== game.steam_appid) {
+        await supabase.from("games").update({ steam_appid: game.steam_appid, updated_at: new Date().toISOString() }).eq("id", gameId);
+      }
+      return gameId;
+    }
   }
   const { data, error } = await supabase.from("games").upsert({
     title: game.title,
@@ -317,6 +326,7 @@ async function upsertGameByRawgId(game) {
     genres: game.genres,
     platforms: game.platforms,
     rawg_rating: game.rawg_rating,
+    steam_appid: game.steam_appid || null,
     updated_at: new Date().toISOString(),
   }, { onConflict: "rawg_id" }).select();
   if (error || !data?.length) return null;
@@ -926,6 +936,7 @@ function AddBacklogSearch({ onAdded }) {
   const [searching, setSearching] = useState(false);
   const [added, setAdded] = useState({});
   const [error, setError] = useState("");
+  const [steamIds, setSteamIds] = useState({});
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); setError(""); return; }
@@ -948,6 +959,8 @@ function AddBacklogSearch({ onAdded }) {
 
   async function handleAdd(g) {
     setAdded((p) => ({ ...p, [g.id]: true }));
+    const raw = (steamIds[g.id] || "").trim();
+    const steamAppid = raw ? parseInt(raw, 10) : null;
     await addToBacklog({
       rawg_id: g.id,
       title: g.name,
@@ -956,6 +969,7 @@ function AddBacklogSearch({ onAdded }) {
       genres: (g.genres || []).map((x) => x.name),
       platforms: (g.platforms || []).map((x) => x.platform.name),
       rawg_rating: g.rating,
+      steam_appid: Number.isFinite(steamAppid) ? steamAppid : null,
     });
     onAdded?.();
   }
@@ -981,6 +995,14 @@ function AddBacklogSearch({ onAdded }) {
                 <div className="text-[10px] font-mono-tech mt-0.5" style={{color:'var(--text-muted)'}}>
                   {g.released ? new Date(g.released).getFullYear() : ''}
                 </div>
+                <input
+                  value={steamIds[g.id] || ''}
+                  onChange={(e) => setSteamIds((p) => ({ ...p, [g.id]: e.target.value.replace(/[^0-9]/g, '') }))}
+                  placeholder="Steam ID (optional)"
+                  inputMode="numeric"
+                  className="cyber-input w-full mt-1.5 !text-[10px] !py-1 !px-2"
+                  disabled={added[g.id]}
+                />
                 <button
                   onClick={() => handleAdd(g)}
                   className={`wishlist-add-btn mt-1.5 ${added[g.id] ? 'added' : ''}`}
@@ -1007,6 +1029,7 @@ function AddGameSearch({ onAdded }) {
   const [searching, setSearching] = useState(false);
   const [added, setAdded] = useState({});
   const [error, setError] = useState("");
+  const [steamIds, setSteamIds] = useState({});
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); setError(""); return; }
@@ -1029,6 +1052,8 @@ function AddGameSearch({ onAdded }) {
 
   async function handleAdd(g) {
     setAdded((p) => ({ ...p, [g.id]: true }));
+    const raw = (steamIds[g.id] || "").trim();
+    const steamAppid = raw ? parseInt(raw, 10) : null;
     await addToWishlist({
       id: null,
       rawg_id: g.id,
@@ -1038,6 +1063,7 @@ function AddGameSearch({ onAdded }) {
       genres: (g.genres || []).map((x) => x.name),
       platforms: (g.platforms || []).map((x) => x.platform.name),
       rawg_rating: g.rating,
+      steam_appid: Number.isFinite(steamAppid) ? steamAppid : null,
     });
     onAdded?.();
   }
@@ -1063,6 +1089,14 @@ function AddGameSearch({ onAdded }) {
                 <div className="text-[10px] font-mono-tech mt-0.5" style={{color:'var(--text-muted)'}}>
                   {g.released ? new Date(g.released).getFullYear() : ''}
                 </div>
+                <input
+                  value={steamIds[g.id] || ''}
+                  onChange={(e) => setSteamIds((p) => ({ ...p, [g.id]: e.target.value.replace(/[^0-9]/g, '') }))}
+                  placeholder="Steam ID (optional)"
+                  inputMode="numeric"
+                  className="cyber-input w-full mt-1.5 !text-[10px] !py-1 !px-2"
+                  disabled={added[g.id]}
+                />
                 <button
                   onClick={() => handleAdd(g)}
                   className={`wishlist-add-btn mt-1.5 ${added[g.id] ? 'added' : ''}`}
