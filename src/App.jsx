@@ -300,38 +300,52 @@ function useWishlist(version) {
 // so we skip the game.id check (it's an upcoming_releases row ID, not a games.id).
 // For recommended games, game.game_id or game.id should be the real games.id.
 // For upcoming/discovery games, a games row is created via rawg_id upsert.
+// Finds an existing games row by rawg_id, or creates one. Shared by
+// addToWishlist and addToBacklog so both stay in sync on how a game
+// gets created from search results.
+async function upsertGameByRawgId(game) {
+  if (game.rawg_id) {
+    const { data: existing } = await supabase
+      .from("games").select("id").eq("rawg_id", game.rawg_id).limit(1);
+    if (existing?.length) return existing[0].id;
+  }
+  const { data, error } = await supabase.from("games").upsert({
+    title: game.title,
+    rawg_id: game.rawg_id,
+    cover_url: game.cover_url,
+    released: game.released,
+    genres: game.genres,
+    platforms: game.platforms,
+    rawg_rating: game.rawg_rating,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "rawg_id" }).select();
+  if (error || !data?.length) return null;
+  return data[0].id;
+}
+
 async function addToWishlist(game, fromUpcoming = false) {
   let gameId = fromUpcoming ? null : (game.game_id || game.id);
-  // Validate: if gameId looks like it's from upcoming_releases (not a games row),
-  // fall through to the create-by-rawg_id path.
-  if (!gameId) {
-    // Check if a games row already exists for this rawg_id
-    if (game.rawg_id) {
-      const { data: existing } = await supabase
-        .from("games").select("id").eq("rawg_id", game.rawg_id).limit(1);
-      if (existing?.length) gameId = existing[0].id;
-    }
-    if (!gameId) {
-      // Create a games row first (upsert by rawg_id)
-      const { data, error } = await supabase.from("games").upsert({
-        title: game.title,
-        rawg_id: game.rawg_id,
-        cover_url: game.cover_url,
-        released: game.released,
-        genres: game.genres,
-        platforms: game.platforms,
-        rawg_rating: game.rawg_rating,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "rawg_id" }).select();
-      if (error || !data?.length) return false;
-      gameId = data[0].id;
-    }
-  }
+  if (!gameId) gameId = await upsertGameByRawgId(game);
+  if (!gameId) return false;
   const { error: e2 } = await supabase.from("ratings").upsert({
     game_id: gameId, user_id: "me", score: 0, status: "wishlist",
     updated_at: new Date().toISOString(),
   }, { onConflict: "game_id,user_id" });
   return !e2;
+}
+
+// addToBacklog — for games you own on a platform sync doesn't reach
+// (Epic, a handheld, physical media, etc). Creates/finds the games row
+// same as addToWishlist, then adds a library_entries row so it shows
+// up in Backlog exactly like a Steam-synced game does. playtime_forever
+// stays 0 since there's no source to pull real hours from.
+async function addToBacklog(game) {
+  const gameId = await upsertGameByRawgId(game);
+  if (!gameId) return false;
+  const { error } = await supabase.from("library_entries").upsert({
+    game_id: gameId, playtime_forever: 0,
+  }, { onConflict: "game_id" });
+  return !error;
 }
 
 // ----------------------------------------------------------- nav icons
@@ -650,6 +664,8 @@ function Backlog({ version, onSyncDone }) {
         <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>{filtered.length} entries · click to rate</p>
         <div className="scan-bar mb-5" />
 
+        <AddBacklogSearch onAdded={refetch} />
+
         {/* filters — scrollable on mobile */}
         <div className="flex gap-2 mb-5 overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
@@ -901,6 +917,85 @@ function Upcoming({ version, onSyncDone }) {
 // keystroke. Uses import.meta.env.VITE_RAWG_API_KEY, which must be set as
 // a GitHub Actions build variable (see deploy.yml) — this key ends up in
 // the public JS bundle, same as VITE_SUPABASE_ANON_KEY already does.
+// AddBacklogSearch — for games you own but sync can't reach (Epic, a
+// handheld, physical media, etc). Same search-games proxy as
+// AddGameSearch, but adds to library_entries instead of the wishlist.
+function AddBacklogSearch({ onAdded }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [added, setAdded] = useState({});
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (query.trim().length < 2) { setResults([]); setError(""); return; }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      setError("");
+      try {
+        const { data, error: fnError } = await supabase.functions.invoke("search-games", { body: { q: query } });
+        if (fnError || data?.error) throw new Error(data?.error || fnError.message);
+        setResults(data?.results || []);
+      } catch (e) {
+        setResults([]);
+        setError(e?.message || "Search failed — check the browser console for details.");
+      } finally {
+        setSearching(false);
+      }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  async function handleAdd(g) {
+    setAdded((p) => ({ ...p, [g.id]: true }));
+    await addToBacklog({
+      rawg_id: g.id,
+      title: g.name,
+      cover_url: g.background_image,
+      released: g.released,
+      genres: (g.genres || []).map((x) => x.name),
+      platforms: (g.platforms || []).map((x) => x.platform.name),
+      rawg_rating: g.rating,
+    });
+    onAdded?.();
+  }
+
+  return (
+    <div className="cyber-panel rounded-lg p-3 sm:p-4 mb-5">
+      <div className="text-[11px] font-mono-tech uppercase tracking-wider mb-2" style={{color:'var(--text-muted)'}}>
+        Add a game not synced from Steam (Epic, handheld, physical, etc.)
+      </div>
+      <input value={query} onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search any released game…" className="cyber-input w-full" />
+      {searching && <p className="text-[11px] font-mono-tech mt-2" style={{color:'var(--text-muted)'}}>Searching…</p>}
+      {error && <p className="text-[11px] font-mono-tech mt-2" style={{color:'var(--danger)'}}>{error}</p>}
+      {results.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {results.map((g) => (
+            <div key={g.id} className="game-card rounded-lg overflow-hidden">
+              <div className="card-img-wrap">
+                <img src={g.background_image || FALLBACK} alt="" className="w-full h-20 object-cover" loading="lazy" />
+              </div>
+              <div className="p-2">
+                <div className="text-[11px] font-display font-bold truncate">{g.name}</div>
+                <div className="text-[10px] font-mono-tech mt-0.5" style={{color:'var(--text-muted)'}}>
+                  {g.released ? new Date(g.released).getFullYear() : ''}
+                </div>
+                <button
+                  onClick={() => handleAdd(g)}
+                  className={`wishlist-add-btn mt-1.5 ${added[g.id] ? 'added' : ''}`}
+                >
+                  {added[g.id] ? '✓ Added' : '+ Backlog'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // AddGameSearch — searches RAWG for any released game (not just ones
 // already in Upcoming/Discover) and adds it to the wishlist via the
 // existing addToWishlist() helper. Goes through the search-games edge
@@ -987,12 +1082,28 @@ function Wishlist({ version, onSyncDone }) {
   const [wlVersion, setWlVersion] = useState(0);
   const rows = useWishlist(`${version}:${wlVersion}`);
   const [q, setQ] = useState("");
+  const [sortBy, setSortBy] = useState("name");
 
   const filtered = useMemo(() => {
     let r = rows.filter((x) => x.game);
     if (q) r = r.filter((x) => x.game.title.toLowerCase().includes(q.toLowerCase()));
-    return r;
-  }, [rows, q]);
+    const sorted = [...r];
+    if (sortBy === "name") {
+      sorted.sort((a, b) => a.game.title.localeCompare(b.game.title));
+    } else if (sortBy === "price") {
+      // nulls (no price data yet) sort to the end regardless of direction
+      sorted.sort((a, b) => {
+        const pa = a.game.deal_price, pb = b.game.deal_price;
+        if (pa == null && pb == null) return 0;
+        if (pa == null) return 1;
+        if (pb == null) return -1;
+        return pa - pb;
+      });
+    } else if (sortBy === "discount") {
+      sorted.sort((a, b) => (b.game.deal_cut ?? -1) - (a.game.deal_cut ?? -1));
+    }
+    return sorted;
+  }, [rows, q, sortBy]);
 
   async function removeWishlist(gameId) {
     await supabase.from("ratings").delete().eq("game_id", gameId).eq("user_id", "me");
@@ -1011,7 +1122,12 @@ function Wishlist({ version, onSyncDone }) {
 
         <div className="flex gap-2 mb-5">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
-            className="cyber-input" />
+            className="cyber-input flex-1" />
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="cyber-input">
+            <option value="name">Sort: Name</option>
+            <option value="price">Sort: Price</option>
+            <option value="discount">Sort: Discount %</option>
+          </select>
         </div>
 
         {filtered.length === 0 ? (
