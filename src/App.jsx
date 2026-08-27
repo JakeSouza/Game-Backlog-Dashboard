@@ -123,10 +123,11 @@ function DealBadge({ game }) {
 
 // RateModal — full rating UI in a modal overlay
 // Supports precision toggle (¼ star / ½ star) for fine-grained ratings.
-function RateModal({ game, currentRating, onClose, onSaved }) {
+function RateModal({ game, currentRating, currentPlaytime, onClose, onSaved }) {
   const [score, setScore] = useState(currentRating?.score || 0);
   const [status, setStatus] = useState(currentRating?.status || "");
   const [precision, setPrecision] = useState(0.25); // default quarter-star
+  const [hours, setHours] = useState(currentPlaytime != null ? String(+(currentPlaytime / 60).toFixed(1)) : "");
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -141,8 +142,24 @@ function RateModal({ game, currentRating, onClose, onSaved }) {
         logged_at: new Date().toISOString().slice(0, 10),
         updated_at: new Date().toISOString(),
       }, { onConflict: "game_id,user_id" });
+
+    // Hours field is optional and separate from rating — only touch
+    // library_entries if the user actually typed something. Mainly for
+    // manually-added (non-Steam) games, but works to correct any game's
+    // hours if needed.
+    let hoursError = null;
+    if (hours.trim() !== "") {
+      const h = parseFloat(hours);
+      if (Number.isFinite(h) && h >= 0) {
+        const { error: hErr } = await supabase
+          .from("library_entries")
+          .upsert({ game_id: game.id, playtime_forever: Math.round(h * 60) }, { onConflict: "game_id" });
+        hoursError = hErr;
+      }
+    }
+
     setSaving(false);
-    if (!error) {
+    if (!error && !hoursError) {
       onSaved?.();
       onClose?.();
     }
@@ -212,6 +229,17 @@ function RateModal({ game, currentRating, onClose, onSaved }) {
               </span>
             ))}
           </div>
+        </div>
+
+        <div className="mb-5">
+          <div className="text-[11px] font-mono-tech mb-2 uppercase tracking-wider" style={{color:'var(--text-muted)'}}>// Hours played</div>
+          <input
+            value={hours}
+            onChange={(e) => setHours(e.target.value.replace(/[^0-9.]/g, ''))}
+            placeholder="e.g. 12.5"
+            inputMode="decimal"
+            className="cyber-input w-full"
+          />
         </div>
 
         <div className="flex gap-2">
@@ -306,16 +334,21 @@ function useWishlist(version) {
 // (e.g. typed in manually alongside a search result), it's written
 // even onto an already-existing row — Steam CDN art and price
 // tracking both depend on that column being populated.
+// Returns { id, error } — callers must check error, not just id.
 async function upsertGameByRawgId(game) {
   if (game.rawg_id) {
-    const { data: existing } = await supabase
+    const { data: existing, error: selErr } = await supabase
       .from("games").select("id,steam_appid").eq("rawg_id", game.rawg_id).limit(1);
+    if (selErr) return { id: null, error: selErr.message };
     if (existing?.length) {
       const gameId = existing[0].id;
       if (game.steam_appid && existing[0].steam_appid !== game.steam_appid) {
-        await supabase.from("games").update({ steam_appid: game.steam_appid, updated_at: new Date().toISOString() }).eq("id", gameId);
+        const { error: updErr } = await supabase.from("games")
+          .update({ steam_appid: game.steam_appid, updated_at: new Date().toISOString() })
+          .eq("id", gameId);
+        if (updErr) return { id: gameId, error: updErr.message };
       }
-      return gameId;
+      return { id: gameId, error: null };
     }
   }
   const { data, error } = await supabase.from("games").upsert({
@@ -329,33 +362,40 @@ async function upsertGameByRawgId(game) {
     steam_appid: game.steam_appid || null,
     updated_at: new Date().toISOString(),
   }, { onConflict: "rawg_id" }).select();
-  if (error || !data?.length) return null;
-  return data[0].id;
+  if (error) return { id: null, error: error.message };
+  if (!data?.length) return { id: null, error: "Insert returned no row (unknown cause)" };
+  return { id: data[0].id, error: null };
 }
 
 async function addToWishlist(game, fromUpcoming = false) {
   let gameId = fromUpcoming ? null : (game.game_id || game.id);
-  if (!gameId) gameId = await upsertGameByRawgId(game);
-  if (!gameId) return false;
+  if (!gameId) {
+    const res = await upsertGameByRawgId(game);
+    if (res.error) return { ok: false, error: res.error };
+    gameId = res.id;
+  }
+  if (!gameId) return { ok: false, error: "Could not resolve a game row." };
   const { error: e2 } = await supabase.from("ratings").upsert({
     game_id: gameId, user_id: "me", score: 0, status: "wishlist",
     updated_at: new Date().toISOString(),
   }, { onConflict: "game_id,user_id" });
-  return !e2;
+  return e2 ? { ok: false, error: e2.message } : { ok: true };
 }
 
 // addToBacklog — for games you own on a platform sync doesn't reach
 // (Epic, a handheld, physical media, etc). Creates/finds the games row
 // same as addToWishlist, then adds a library_entries row so it shows
-// up in Backlog exactly like a Steam-synced game does. playtime_forever
-// stays 0 since there's no source to pull real hours from.
-async function addToBacklog(game) {
-  const gameId = await upsertGameByRawgId(game);
-  if (!gameId) return false;
+// up in Backlog exactly like a Steam-synced game does. Accepts an
+// optional playtimeMinutes so hours can be logged at add-time instead
+// of needing a separate edit afterward.
+async function addToBacklog(game, playtimeMinutes = 0) {
+  const res = await upsertGameByRawgId(game);
+  if (res.error) return { ok: false, error: res.error };
+  if (!res.id) return { ok: false, error: "Could not resolve a game row." };
   const { error } = await supabase.from("library_entries").upsert({
-    game_id: gameId, playtime_forever: 0,
+    game_id: res.id, playtime_forever: playtimeMinutes || 0,
   }, { onConflict: "game_id" });
-  return !error;
+  return error ? { ok: false, error: error.message } : { ok: true };
 }
 
 // ----------------------------------------------------------- nav icons
@@ -697,7 +737,7 @@ function Backlog({ version, onSyncDone }) {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
             {filtered.map((r) => (
               <div key={r.game.id} className="game-card rounded-lg overflow-hidden cursor-pointer"
-                   onClick={() => setRateGame({ game: r.game, rating: r.rating })}>
+                   onClick={() => setRateGame({ game: r.game, rating: r.rating, playtime_forever: r.playtime_forever })}>
                 <div className="card-img-wrap">
                   <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-28 sm:h-36 object-cover" />
                   {r.rating?.status && (
@@ -731,6 +771,7 @@ function Backlog({ version, onSyncDone }) {
         <RateModal
           game={rateGame.game}
           currentRating={rateGame.rating}
+          currentPlaytime={rateGame.playtime_forever}
           onClose={() => setRateGame(null)}
           onSaved={onRatingSaved}
         />
@@ -937,6 +978,8 @@ function AddBacklogSearch({ onAdded }) {
   const [added, setAdded] = useState({});
   const [error, setError] = useState("");
   const [steamIds, setSteamIds] = useState({});
+  const [hoursMap, setHoursMap] = useState({});
+  const [addErrors, setAddErrors] = useState({});
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); setError(""); return; }
@@ -958,10 +1001,11 @@ function AddBacklogSearch({ onAdded }) {
   }, [query]);
 
   async function handleAdd(g) {
-    setAdded((p) => ({ ...p, [g.id]: true }));
+    setAddErrors((p) => ({ ...p, [g.id]: "" }));
     const raw = (steamIds[g.id] || "").trim();
     const steamAppid = raw ? parseInt(raw, 10) : null;
-    await addToBacklog({
+    const h = parseFloat(hoursMap[g.id] || "0") || 0;
+    const result = await addToBacklog({
       rawg_id: g.id,
       title: g.name,
       cover_url: g.background_image,
@@ -970,8 +1014,14 @@ function AddBacklogSearch({ onAdded }) {
       platforms: (g.platforms || []).map((x) => x.platform.name),
       rawg_rating: g.rating,
       steam_appid: Number.isFinite(steamAppid) ? steamAppid : null,
-    });
-    onAdded?.();
+    }, Math.round(h * 60));
+    if (result.ok) {
+      setAdded((p) => ({ ...p, [g.id]: true }));
+      onAdded?.();
+    } else {
+      setAddErrors((p) => ({ ...p, [g.id]: result.error || "Failed to add — see console." }));
+      console.error("addToBacklog failed:", result.error);
+    }
   }
 
   return (
@@ -1003,12 +1053,23 @@ function AddBacklogSearch({ onAdded }) {
                   className="cyber-input w-full mt-1.5 !text-[10px] !py-1 !px-2"
                   disabled={added[g.id]}
                 />
+                <input
+                  value={hoursMap[g.id] || ''}
+                  onChange={(e) => setHoursMap((p) => ({ ...p, [g.id]: e.target.value.replace(/[^0-9.]/g, '') }))}
+                  placeholder="Hours played (optional)"
+                  inputMode="decimal"
+                  className="cyber-input w-full mt-1.5 !text-[10px] !py-1 !px-2"
+                  disabled={added[g.id]}
+                />
                 <button
                   onClick={() => handleAdd(g)}
                   className={`wishlist-add-btn mt-1.5 ${added[g.id] ? 'added' : ''}`}
                 >
                   {added[g.id] ? '✓ Added' : '+ Backlog'}
                 </button>
+                {addErrors[g.id] && (
+                  <p className="text-[9px] font-mono-tech mt-1" style={{color:'var(--danger)'}}>{addErrors[g.id]}</p>
+                )}
               </div>
             </div>
           ))}
@@ -1030,6 +1091,7 @@ function AddGameSearch({ onAdded }) {
   const [added, setAdded] = useState({});
   const [error, setError] = useState("");
   const [steamIds, setSteamIds] = useState({});
+  const [addErrors, setAddErrors] = useState({});
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); setError(""); return; }
@@ -1051,10 +1113,10 @@ function AddGameSearch({ onAdded }) {
   }, [query]);
 
   async function handleAdd(g) {
-    setAdded((p) => ({ ...p, [g.id]: true }));
+    setAddErrors((p) => ({ ...p, [g.id]: "" }));
     const raw = (steamIds[g.id] || "").trim();
     const steamAppid = raw ? parseInt(raw, 10) : null;
-    await addToWishlist({
+    const result = await addToWishlist({
       id: null,
       rawg_id: g.id,
       title: g.name,
@@ -1065,7 +1127,13 @@ function AddGameSearch({ onAdded }) {
       rawg_rating: g.rating,
       steam_appid: Number.isFinite(steamAppid) ? steamAppid : null,
     });
-    onAdded?.();
+    if (result.ok) {
+      setAdded((p) => ({ ...p, [g.id]: true }));
+      onAdded?.();
+    } else {
+      setAddErrors((p) => ({ ...p, [g.id]: result.error || "Failed to add — see console." }));
+      console.error("addToWishlist failed:", result.error);
+    }
   }
 
   return (
@@ -1103,6 +1171,9 @@ function AddGameSearch({ onAdded }) {
                 >
                   {added[g.id] ? '✓ Wishlisted' : '+ Wishlist'}
                 </button>
+                {addErrors[g.id] && (
+                  <p className="text-[9px] font-mono-tech mt-1" style={{color:'var(--danger)'}}>{addErrors[g.id]}</p>
+                )}
               </div>
             </div>
           ))}
