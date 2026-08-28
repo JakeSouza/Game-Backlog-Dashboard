@@ -3,37 +3,37 @@
 @tailwind utilities;
 
 /* ============================================================
-   NEO-KYOTO NEON — GLASS EDITION
-   Same magenta/cyan colorway, reworked toward a sleeker, more
-   modern surface language: translucent glass panels, pill
-   buttons/tags, larger radii, grain texture instead of a flat
-   vignette. All existing class names are preserved so Backlog,
-   Wishlist, Upcoming, and Recommend need zero JSX changes.
+   DEEP SEA — bioluminescent, organic, dark-water calm.
+   Teal/violet glow on near-black navy, rounded organic shapes,
+   soft blurred light instead of hard neon edges. Every class
+   name from the previous build is preserved so Backlog,
+   Wishlist, Upcoming, Recommend, and the search/rate modals
+   need zero JSX changes.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 :root {
-  --bg: #0b0a14;
-  --bg-elevated: rgba(255,255,255,0.045);
-  --bg-hover: rgba(255,255,255,0.08);
-  --border: rgba(255,255,255,0.1);
-  --border-hover: rgba(255,255,255,0.22);
-  --text: #ece9f7;
-  --text-muted: #8b87a8;
-  --text-dim: #4a4666;
-  --accent: #ff2e8f;
-  --accent-hover: #ff5aa5;
-  --accent-dim: rgba(255,46,143,0.12);
-  --accent-border: rgba(255,46,143,0.4);
-  --accent-2: #22e5ff;
-  --accent-2-dim: rgba(34,229,255,0.12);
-  --accent-2-border: rgba(34,229,255,0.4);
-  --success: #39ff9c;
-  --danger: #ff3860;
-  --warning: #ffd93d;
-  --radius: 18px;
-  --radius-sm: 12px;
+  --bg: #041420;
+  --bg-elevated: rgba(255,255,255,0.035);
+  --bg-hover: rgba(255,255,255,0.065);
+  --border: rgba(45,225,194,0.16);
+  --border-hover: rgba(45,225,194,0.32);
+  --text: #eafffb;
+  --text-muted: #6fa39c;
+  --text-dim: #35504c;
+  --accent: #2de1c2;
+  --accent-hover: #5cf0d8;
+  --accent-dim: rgba(45,225,194,0.12);
+  --accent-border: rgba(45,225,194,0.4);
+  --accent-2: #7b5cff;
+  --accent-2-dim: rgba(123,92,255,0.14);
+  --accent-2-border: rgba(123,92,255,0.4);
+  --success: #4ddba3;
+  --danger: #ff5a7a;
+  --warning: #ffcf5c;
+  --radius: 22px;
+  --radius-sm: 14px;
 }
 
 * {
@@ -49,34 +49,29 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---- background: dual glow + grain, replaces flat vignette ---- */
+/* ---- background: bioluminescent glow blobs, no grain — this
+   theme is about soft light through water, not texture ---- */
 .cyber-bg {
   position: fixed;
   inset: 0;
   z-index: 0;
   background:
-    radial-gradient(ellipse 65% 40% at 12% -5%, rgba(255,46,143,0.12), transparent 65%),
-    radial-gradient(ellipse 65% 40% at 100% 105%, rgba(34,229,255,0.1), transparent 65%),
+    radial-gradient(ellipse 70% 45% at 15% -8%, rgba(123,92,255,0.16), transparent 65%),
+    radial-gradient(ellipse 60% 40% at 100% 15%, rgba(45,225,194,0.12), transparent 60%),
+    radial-gradient(ellipse 55% 40% at 20% 100%, rgba(45,225,194,0.08), transparent 65%),
     var(--bg);
-}
-.cyber-bg::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  opacity: 0.35;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
 }
 
 /* ---- typography ---- */
-.font-display { font-family: 'Rajdhani', sans-serif; font-weight: 700; letter-spacing: 0.01em; }
+.font-display { font-family: 'Comfortaa', sans-serif; font-weight: 700; letter-spacing: 0; }
 .font-mono-tech { font-family: 'JetBrains Mono', monospace; }
 .font-body { font-family: 'Inter', sans-serif; }
 
 /* ---- accent text ---- */
-.neon-text-cyan { color: var(--accent-2); }
-.neon-text-magenta { color: var(--accent); }
+.neon-text-cyan { color: var(--accent); }
+.neon-text-magenta { color: var(--accent-2); }
 .neon-text-lime { color: var(--success); }
-.neon-text-purple { color: #a78bfa; }
+.neon-text-purple { color: var(--accent-2); }
 
 /* ---- panels (glass) ---- */
 .cyber-panel {
@@ -87,7 +82,7 @@ body {
   border-radius: var(--radius) !important;
 }
 
-/* ---- buttons: pill, glass, gradient on hover ---- */
+/* ---- buttons: pill, glass, teal→violet glow on hover ---- */
 .cyber-btn {
   background: var(--bg-elevated);
   backdrop-filter: blur(14px);
@@ -101,8 +96,8 @@ body {
 .cyber-btn:hover {
   border-color: var(--accent-border);
   color: #fff;
-  background: linear-gradient(135deg, rgba(255,46,143,0.3), rgba(34,229,255,0.2));
-  box-shadow: 0 0 20px rgba(255,46,143,0.2);
+  background: linear-gradient(135deg, rgba(45,225,194,0.3), rgba(123,92,255,0.25));
+  box-shadow: 0 0 22px rgba(45,225,194,0.2);
 }
 
 /* ---- nav active ---- */
@@ -113,7 +108,7 @@ body {
   border-radius: 999px;
 }
 
-/* ---- game card (glass) ---- */
+/* ---- game card (glass, organic radius) ---- */
 .game-card {
   background: var(--bg-elevated);
   backdrop-filter: blur(16px);
@@ -125,8 +120,8 @@ body {
   overflow: hidden;
 }
 .game-card:hover {
-  border-color: var(--accent-2-border);
-  box-shadow: 0 10px 30px rgba(34,229,255,0.12);
+  border-color: var(--accent-border);
+  box-shadow: 0 12px 32px rgba(45,225,194,0.14);
   transform: translateY(-3px);
 }
 .game-card .card-img-wrap { position: relative; overflow: hidden; }
@@ -136,11 +131,11 @@ body {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, transparent 55%, rgba(11,10,20,0.85) 100%);
+  background: linear-gradient(180deg, transparent 55%, rgba(4,20,32,0.9) 100%);
   pointer-events: none;
 }
 
-/* ---- HUD stat card (glass) ---- */
+/* ---- HUD stat card (glass, with a soft violet glow blob) ---- */
 .hud-card {
   background: var(--bg-elevated);
   backdrop-filter: blur(20px);
@@ -153,15 +148,18 @@ body {
 .hud-card::before {
   content: '';
   position: absolute;
-  top: 0; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  opacity: 0.75;
+  top: -40%; right: -20%;
+  width: 120px; height: 120px;
+  background: radial-gradient(circle, rgba(123,92,255,0.3), transparent 70%);
+  filter: blur(12px);
+  pointer-events: none;
 }
 .hud-value {
-  font-family: 'Rajdhani', sans-serif;
+  font-family: 'Comfortaa', sans-serif;
   font-weight: 700;
-  color: var(--text);
-  letter-spacing: 0.01em;
+  color: var(--accent);
+  letter-spacing: 0;
+  text-shadow: 0 0 16px rgba(45,225,194,0.3);
 }
 
 /* ---- genre tag: pill ---- */
@@ -170,15 +168,15 @@ body {
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: rgba(255,255,255,0.06);
+  background: rgba(123,92,255,0.1);
   border: 1px solid var(--border);
   color: var(--text-muted);
   padding: 2px 8px;
   border-radius: 999px;
 }
 
-/* ---- glitch (kept minimal) ---- */
-.glitch { position: relative; font-family: 'Rajdhani', sans-serif; font-weight: 700; letter-spacing: 0.01em; }
+/* ---- glitch (kept minimal, renamed feel: just the display font) ---- */
+.glitch { position: relative; font-family: 'Comfortaa', sans-serif; font-weight: 700; letter-spacing: 0; }
 .glitch::before, .glitch::after { display: none; }
 
 /* ---- scan bar ---- */
@@ -196,7 +194,7 @@ body {
   position: fixed;
   bottom: 0; left: 0; right: 0;
   z-index: 50;
-  background: rgba(11,10,20,0.75);
+  background: rgba(4,20,32,0.8);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid var(--border);
@@ -209,7 +207,7 @@ body {
   padding: 6px 12px; font-size: 10px; font-family: 'JetBrains Mono', monospace;
   text-transform: uppercase; color: var(--text-dim); transition: color 0.15s;
 }
-.bottom-nav a.active { color: var(--accent); text-shadow: 0 0 10px rgba(255,46,143,0.5); }
+.bottom-nav a.active { color: var(--accent); text-shadow: 0 0 10px rgba(45,225,194,0.5); }
 
 /* ---- input/select: glass, rounded ---- */
 .cyber-input {
@@ -224,7 +222,7 @@ body {
   transition: border-color 0.15s;
   outline: none;
 }
-.cyber-input:focus { border-color: var(--accent-2-border); box-shadow: 0 0 0 3px var(--accent-2-dim); }
+.cyber-input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-dim); }
 
 /* ---- scrollbar ---- */
 ::-webkit-scrollbar { width: 6px; }
@@ -238,16 +236,16 @@ body {
 /* ---- pulse (sync running) ---- */
 @keyframes pulseGlow {
   0%, 100% { border-color: var(--border); box-shadow: none; }
-  50% { border-color: var(--accent-2-border); box-shadow: 0 0 16px rgba(34,229,255,0.2); }
+  50% { border-color: var(--accent-border); box-shadow: 0 0 18px rgba(45,225,194,0.25); }
 }
 .pulse-glow { animation: pulseGlow 1.5s ease-in-out infinite; }
 
 /* ---- recharts tooltip ---- */
 .recharts-tooltip-wrapper .recharts-default-tooltip {
-  background: rgba(20,18,31,0.95) !important;
+  background: rgba(6,30,45,0.95) !important;
   backdrop-filter: blur(10px) !important;
   border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
+  border-radius: 12px !important;
   font-family: 'JetBrains Mono', monospace !important;
   font-size: 11px !important;
 }
@@ -269,7 +267,7 @@ body {
 .star-fg-layer {
   position: absolute; top: 0; left: 0; overflow: hidden; white-space: nowrap;
   color: var(--accent); pointer-events: none; transition: width 0.08s ease-out;
-  text-shadow: 0 0 6px rgba(255,46,143,0.45);
+  text-shadow: 0 0 8px rgba(45,225,194,0.55);
 }
 
 /* ============================================================
@@ -289,11 +287,11 @@ body {
   backdrop-filter: blur(8px);
 }
 .status-none { border-color: var(--border); color: var(--text-dim); }
-.status-played { border-color: rgba(57,255,156,0.3); color: var(--success); background: rgba(57,255,156,0.08); }
-.status-playing { border-color: var(--accent-2-border); color: var(--accent-2); background: var(--accent-2-dim); }
-.status-backlog { border-color: rgba(167,139,250,0.3); color: #a78bfa; background: rgba(167,139,250,0.08); }
-.status-wishlist { border-color: rgba(255,217,61,0.3); color: var(--warning); background: rgba(255,217,61,0.08); }
-.status-dropped { border-color: rgba(255,56,96,0.3); color: var(--danger); background: rgba(255,56,96,0.08); }
+.status-played { border-color: rgba(77,219,163,0.35); color: var(--success); background: rgba(77,219,163,0.1); }
+.status-playing { border-color: var(--accent-border); color: var(--accent); background: var(--accent-dim); }
+.status-backlog { border-color: var(--accent-2-border); color: var(--accent-2); background: var(--accent-2-dim); }
+.status-wishlist { border-color: rgba(255,207,92,0.35); color: var(--warning); background: rgba(255,207,92,0.1); }
+.status-dropped { border-color: rgba(255,90,122,0.35); color: var(--danger); background: rgba(255,90,122,0.1); }
 .status-selector { display: flex; flex-wrap: wrap; gap: 6px; }
 .status-selector .status-tag { padding: 6px 14px; font-size: 11px; opacity: 0.45; }
 .status-selector .status-tag.selected { opacity: 1; }
@@ -304,16 +302,16 @@ body {
    ============================================================ */
 .rate-modal-overlay {
   position: fixed; inset: 0; z-index: 100;
-  background: rgba(11,10,20,0.7);
+  background: rgba(4,20,32,0.75);
   backdrop-filter: blur(6px);
   display: flex; align-items: center; justify-content: center; padding: 16px;
 }
 .rate-modal {
-  background: rgba(20,18,31,0.85);
+  background: rgba(8,35,52,0.85);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: 24px;
   padding: 22px;
   max-width: 360px;
   width: 100%;
@@ -339,11 +337,11 @@ body {
   align-items: center;
   gap: 4px;
 }
-.wishlist-add-btn:hover { border-color: var(--warning); color: var(--warning); background: rgba(255,217,61,0.08); }
-.wishlist-add-btn.added { border-color: rgba(255,217,61,0.3); color: var(--warning); background: rgba(255,217,61,0.08); cursor: default; }
+.wishlist-add-btn:hover { border-color: var(--warning); color: var(--warning); background: rgba(255,207,92,0.1); }
+.wishlist-add-btn.added { border-color: rgba(255,207,92,0.35); color: var(--warning); background: rgba(255,207,92,0.1); cursor: default; }
 
 /* ============================================================
-   DEAL BADGE — IsThereAnyDeal price/discount (new)
+   DEAL BADGE — IsThereAnyDeal price/discount
    ============================================================ */
 .deal-badge {
   display: inline-flex;
@@ -358,8 +356,8 @@ body {
   color: var(--text-muted);
 }
 .deal-badge-sale {
-  border-color: rgba(57,255,156,0.3);
-  background: rgba(57,255,156,0.08);
+  border-color: rgba(77,219,163,0.35);
+  background: rgba(77,219,163,0.1);
 }
 .deal-cut {
   color: var(--success);
@@ -377,7 +375,7 @@ body {
 }
 
 /* ============================================================
-   MOST PLAYED — top-5 cover grid (new)
+   MOST PLAYED — top-5 cover grid
    ============================================================ */
 .mp-card { position: relative; }
 .mp-cover-wrap {
@@ -390,24 +388,24 @@ body {
   transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
 }
 .mp-card:hover .mp-cover-wrap {
-  border-color: var(--accent-2-border);
+  border-color: var(--accent-border);
   transform: translateY(-3px);
-  box-shadow: 0 10px 30px rgba(34,229,255,0.15);
+  box-shadow: 0 12px 32px rgba(45,225,194,0.18);
 }
 .mp-rank {
   position: absolute; top: 8px; left: 8px;
   width: 24px; height: 24px; border-radius: 50%;
-  background: rgba(11,10,20,0.75);
+  background: rgba(4,20,32,0.75);
   backdrop-filter: blur(6px);
   border: 1px solid var(--border-hover);
   display: flex; align-items: center; justify-content: center;
-  font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 12px;
-  color: var(--accent-2);
+  font-family: 'Comfortaa', sans-serif; font-weight: 700; font-size: 11px;
+  color: var(--accent);
   z-index: 2;
 }
 .mp-info { padding: 8px 2px 0; }
 .mp-title {
-  font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 13px;
+  font-family: 'Comfortaa', sans-serif; font-weight: 600; font-size: 13px;
   color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }

@@ -609,7 +609,7 @@ function Home({ version, onSyncDone }) {
 
   if (loading) return <Layout onSyncDone={onSyncDone}><p className="font-mono-tech text-sm" style={{color:'var(--text-muted)'}}>Loading…</p></Layout>;
 
-  const COLORS = ["#f97316", "#a78bfa", "#22c55e", "#eab308", "#ef4444", "#60a5fa", "#e4e4e7", "#71717a"];
+  const COLORS = ["#2de1c2", "#7b5cff", "#4fb8ff", "#4ddba3", "#ffcf5c", "#ff5a7a", "#9b6bff", "#6fa39c"];
 
   return (
     <Layout onSyncDone={onSyncDone}>
