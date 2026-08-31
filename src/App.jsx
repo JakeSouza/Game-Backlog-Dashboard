@@ -128,10 +128,21 @@ function RateModal({ game, currentRating, currentPlaytime, onClose, onSaved }) {
   const [status, setStatus] = useState(currentRating?.status || "");
   const [precision, setPrecision] = useState(0.25); // default quarter-star
   const [hours, setHours] = useState(currentPlaytime != null ? String(+(currentPlaytime / 60).toFixed(1)) : "");
+  const [favoriteRank, setFavoriteRank] = useState(currentRating?.favorite_rank || null);
   const [saving, setSaving] = useState(false);
 
   async function save() {
     setSaving(true);
+    // If assigning a favorite rank, clear it from whoever currently holds it
+    // first — avoids the unique constraint conflict, and means picking a
+    // rank someone else has just bumps them out rather than erroring.
+    if (favoriteRank) {
+      await supabase.from("ratings")
+        .update({ favorite_rank: null })
+        .eq("user_id", "me")
+        .eq("favorite_rank", favoriteRank)
+        .neq("game_id", game.id);
+    }
     const { error } = await supabase
       .from("ratings")
       .upsert({
@@ -139,6 +150,7 @@ function RateModal({ game, currentRating, currentPlaytime, onClose, onSaved }) {
         user_id: "me",
         score: score || 0,
         status: status || "backlog",
+        favorite_rank: favoriteRank || null,
         logged_at: new Date().toISOString().slice(0, 10),
         updated_at: new Date().toISOString(),
       }, { onConflict: "game_id,user_id" });
@@ -242,6 +254,29 @@ function RateModal({ game, currentRating, currentPlaytime, onClose, onSaved }) {
           />
         </div>
 
+        <div className="mb-5">
+          <div className="text-[11px] font-mono-tech mb-2 uppercase tracking-wider" style={{color:'var(--text-muted)'}}>// All-time favorite</div>
+          <div className="flex gap-2">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                onClick={() => setFavoriteRank(favoriteRank === n ? null : n)}
+                className="status-tag"
+                style={favoriteRank === n
+                  ? { borderColor: 'var(--accent-2)', color: 'var(--accent-2)', background: 'var(--accent-2-dim)', opacity: 1, fontSize: '13px', padding: '6px 12px' }
+                  : { fontSize: '13px', padding: '6px 12px' }}
+              >
+                {favoriteRank === n ? `♥ ${n}` : n}
+              </button>
+            ))}
+          </div>
+          {favoriteRank && (
+            <p className="text-[10px] font-mono-tech mt-1.5" style={{color:'var(--text-muted)'}}>
+              Assigning #{favoriteRank} will bump whatever game currently holds that spot.
+            </p>
+          )}
+        </div>
+
         <div className="flex gap-2">
           <button onClick={save} disabled={saving}
             className="cyber-btn flex-1 px-4 py-2.5 rounded text-sm">
@@ -269,7 +304,7 @@ function useLibrary(version) {
       setLoading(true);
       const { data } = await supabase
         .from("library_entries")
-        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,deal_price,deal_regular,deal_cut,deal_shop,deal_url,rating:ratings(score,status))")
+        .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,deal_price,deal_regular,deal_cut,deal_shop,deal_url,rating:ratings(score,status,favorite_rank))")
         .order("playtime_forever", { ascending: false });
       const norm = (data || []).map((r) => ({
         ...r,
@@ -555,6 +590,34 @@ function Layout({ onSyncDone, children }) {
 }
 
 // -------------------------------------------------------------------- Home
+function FavoritesGrid({ rows }) {
+  const favs = rows
+    .filter((r) => r.game && r.rating?.favorite_rank)
+    .sort((a, b) => a.rating.favorite_rank - b.rating.favorite_rank);
+  if (!favs.length) return null;
+  return (
+    <div className="mb-6">
+      <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>All-Time Favorites</h2>
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 sm:gap-4">
+        {favs.map((r) => (
+          <div key={r.game.id} className="mp-card">
+            <div className="mp-cover-wrap">
+              <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-full object-cover" />
+              <span className="mp-rank" style={{ borderColor: 'var(--accent-2)', color: 'var(--accent-2)' }}>♥{r.rating.favorite_rank}</span>
+            </div>
+            <div className="mp-info">
+              <div className="mp-title">{r.game.title}</div>
+              {r.rating.score > 0 && (
+                <div className="mp-meta"><span className="mp-stars">★ {fmtScore(r.rating.score)}</span></div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MostPlayedGrid({ rows }) {
   const top = rows.slice(0, 5).filter((r) => r.game);
   if (!top.length) return null;
@@ -625,6 +688,8 @@ function Home({ version, onSyncDone }) {
           <StatCard label="Avg Rating" value={stats.avg} sub="your ratings" />
         </div>
 
+        <FavoritesGrid rows={rows} />
+
         <MostPlayedGrid rows={rows} />
 
         <div className="cyber-panel rounded-lg p-4 sm:p-5">
@@ -677,7 +742,7 @@ function Backlog({ version, onSyncDone }) {
   const refetch = useCallback(async () => {
     const { data } = await supabase
       .from("library_entries")
-      .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,deal_price,deal_regular,deal_cut,deal_shop,deal_url,rating:ratings(score,status))")
+      .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,deal_price,deal_regular,deal_cut,deal_shop,deal_url,rating:ratings(score,status,favorite_rank))")
       .order("playtime_forever", { ascending: false });
     const norm = (data || []).map((r) => ({
       ...r,
