@@ -799,6 +799,7 @@ function Recommend({ version, onSyncDone }) {
   const discover = useRpc("recommend_discover", 12, version);
   const [tab, setTab] = useState("play");
   const [added, setAdded] = useState({});
+  const [expandedId, setExpandedId] = useState(null);
   const [wlVersion, setWlVersion] = useState(0);
   const wishlist = useWishlist(wlVersion);
   const wishlistedIds = useMemo(() => {
@@ -826,9 +827,17 @@ function Recommend({ version, onSyncDone }) {
     <Layout onSyncDone={onSyncDone}>
       <div className="fade-in">
         <h1 className="text-xl sm:text-2xl font-display font-black mb-1" style={{color:'var(--text)'}}>RECOMMEND</h1>
-        <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>
-          genre affinity engine · scores 0–10 based on genre overlap with your rated games
-        </p>
+        <div className="cyber-panel rounded-lg p-3 sm:p-4 mb-5">
+          <p className="font-mono-tech text-[11px] sm:text-xs leading-relaxed" style={{color:'var(--text-muted)'}}>
+            Score (0–10) = the average of your star-rating average in each genre this game shares with
+            games you've rated, doubled to fit a 0–10 scale. Only genres you've actually rated something
+            in count — unrated genres are ignored rather than dragging the score down.
+            <br /><br />
+            <span style={{color:'var(--warning)'}}>Note:</span> a genre backed by only one or two rated
+            games can swing to an extreme average — tap a card's match bar to see exactly which genres
+            contributed and how many rated games back each one.
+          </p>
+        </div>
         <div className="scan-bar mb-5" />
 
         <div className="flex gap-2 mb-5">
@@ -852,6 +861,7 @@ function Recommend({ version, onSyncDone }) {
               const gid = String(r.game_id || r.rawg_id || r.title);
               const isWishlisted = tab === "discover" && (added[gid] || wishlistedIds.has(gid) || wishlistedIds.has(String(r.rawg_id)));
               const matchPct = r.score ? Math.min(100, (Number(r.score) / 10) * 100) : 0;
+              const expanded = expandedId === gid;
               return (
                 <div key={tab === "play" ? r.game_id : i} className="game-card rounded-lg overflow-hidden">
                   <div className="card-img-wrap">
@@ -868,7 +878,27 @@ function Recommend({ version, onSyncDone }) {
                         {r.released ? new Date(r.released).toLocaleDateString() : ''}
                       </div>
                     )}
-                    <MatchBar score={r.score} label={tab === "play" ? "REPLAY VALUE" : "GENRE MATCH"} />
+                    <div onClick={(e) => { e.stopPropagation(); setExpandedId(expanded ? null : gid); }} style={{cursor:'pointer'}}>
+                      <MatchBar score={r.score} label={tab === "play" ? "REPLAY VALUE" : "GENRE MATCH"} />
+                    </div>
+                    {expanded && (
+                      <div className="mt-2 pt-2" style={{borderTop:'1px solid var(--border)'}} onClick={(e) => e.stopPropagation()}>
+                        {(!r.matched_genres || r.matched_genres.length === 0) ? (
+                          <p className="text-[10px] font-mono-tech" style={{color:'var(--text-muted)'}}>No genre overlap with your rated games.</p>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            {r.matched_genres.map((mg) => (
+                              <div key={mg.genre} className="flex items-center justify-between text-[10px] font-mono-tech">
+                                <span style={{color:'var(--text)'}}>{mg.genre}</span>
+                                <span style={{color: mg.n <= 2 ? 'var(--warning)' : 'var(--text-muted)'}}>
+                                  {mg.weight}★ avg ({mg.n} rated)
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {tab === "discover" && (
                       <button
                         onClick={(e) => { e.stopPropagation(); if (!isWishlisted) handleAdd(r, e); }}
