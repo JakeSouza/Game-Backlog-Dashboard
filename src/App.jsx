@@ -590,20 +590,60 @@ function Layout({ onSyncDone, children }) {
 }
 
 // -------------------------------------------------------------------- Home
+function NowPlaying({ rows, onOpen }) {
+  const playing = rows.filter((r) => r.game && r.rating?.status === "playing");
+  if (!playing.length) return null;
+  return (
+    <div className="mb-6">
+      <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>Now Playing</h2>
+      <div className="flex flex-col gap-3">
+        {playing.map((r) => (
+          <div
+            key={r.game.id}
+            className="now-playing-card"
+            onClick={() => onOpen({ game: r.game, rating: r.rating, playtime_forever: r.playtime_forever })}
+          >
+            <div className="np-cover">
+              <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-full object-cover" />
+            </div>
+            <div className="np-info">
+              <div className="np-live"><span className="np-dot" />NOW PLAYING</div>
+              <div className="np-title">{r.game.title}</div>
+              <div className="np-meta">
+                <span>{fmtHours(r.playtime_forever || 0)} logged</span>
+                {r.rating?.score > 0 && <span className="np-stars">★ {fmtScore(r.rating.score)}</span>}
+              </div>
+              <div className="flex flex-wrap gap-1 mt-2">
+                {(r.game.genres || []).slice(0, 3).map((g) => (
+                  <span key={g} className="genre-tag">{g}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FavoritesGrid({ rows }) {
   const favs = rows
     .filter((r) => r.game && r.rating?.favorite_rank)
     .sort((a, b) => a.rating.favorite_rank - b.rating.favorite_rank);
   if (!favs.length) return null;
   return (
-    <div className="mb-6">
-      <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>All-Time Favorites</h2>
-      <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 sm:gap-4">
+    <div className="favorites-shelf mb-6">
+      <h2 className="favorites-shelf-title">
+        <span className="favorites-shelf-icon">✦</span>
+        All-Time Favorites
+        <span className="favorites-shelf-icon">✦</span>
+      </h2>
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-4 sm:gap-5">
         {favs.map((r) => (
-          <div key={r.game.id} className="mp-card">
-            <div className="mp-cover-wrap">
+          <div key={r.game.id} className="mp-card fav-card">
+            <div className="mp-cover-wrap fav-cover-wrap">
               <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-full object-cover" />
-              <span className="mp-rank" style={{ borderColor: 'var(--accent-2)', color: 'var(--accent-2)' }}>♥{r.rating.favorite_rank}</span>
+              <span className="fav-rank-badge">{r.rating.favorite_rank}</span>
             </div>
             <div className="mp-info">
               <div className="mp-title">{r.game.title}</div>
@@ -656,7 +696,26 @@ function StatCard({ label, value, sub, accent }) {
 }
 
 function Home({ version, onSyncDone }) {
-  const { rows, loading } = useLibrary(version);
+  const { rows, setRows, loading } = useLibrary(version);
+  const [rateGame, setRateGame] = useState(null);
+
+  const refetch = useCallback(async () => {
+    const { data } = await supabase
+      .from("library_entries")
+      .select("playtime_forever,last_played,game:games(id,title,cover_url,rawg_rating,genres,released,steam_appid,deal_price,deal_regular,deal_cut,deal_shop,deal_url,rating:ratings(score,status,favorite_rank))")
+      .order("playtime_forever", { ascending: false });
+    const norm = (data || []).map((r) => ({
+      ...r,
+      rating: Array.isArray(r.game?.rating) ? (r.game.rating[0] || null) : (r.game?.rating ?? null),
+      game: r.game ? { ...r.game, rating: undefined } : r.game,
+    }));
+    setRows(norm);
+  }, [setRows]);
+
+  const onRatingSaved = useCallback(() => {
+    setRateGame(null);
+    refetch();
+  }, [refetch]);
   const stats = useMemo(() => {
     const total = rows.length;
     const played = rows.filter((r) => r.rating?.status === "played").length;
@@ -680,6 +739,8 @@ function Home({ version, onSyncDone }) {
         <h1 className="text-xl sm:text-2xl lg:text-3xl font-display font-black mb-1" style={{color:'var(--text)'}}>YOUR BACKLOG</h1>
         <p className="font-mono-tech text-[11px] sm:text-xs mb-5" style={{color:'var(--text-muted)'}}>system status: online</p>
         <div className="scan-bar mb-6" />
+
+        <NowPlaying rows={rows} onOpen={setRateGame} />
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
           <StatCard label="Games Owned" value={stats.total} />
@@ -707,6 +768,16 @@ function Home({ version, onSyncDone }) {
           ) : <p className="text-sm font-mono-tech" style={{color:'var(--text-muted)'}}>No data — run sync</p>}
         </div>
       </div>
+
+      {rateGame && (
+        <RateModal
+          game={rateGame.game}
+          currentRating={rateGame.rating}
+          currentPlaytime={rateGame.playtime_forever}
+          onClose={() => setRateGame(null)}
+          onSaved={onRatingSaved}
+        />
+      )}
     </Layout>
   );
 }

@@ -415,3 +415,113 @@ body {
   margin-top: 2px;
 }
 .mp-stars { color: var(--accent); }
+
+/* ============================================================
+   NOW PLAYING — spotlight card, deliberately bigger and louder
+   than a regular grid tile since there's usually just one of these
+   ============================================================ */
+.now-playing-card {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  background: var(--bg-elevated);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+.now-playing-card::before {
+  content: '';
+  position: absolute; top: -50%; left: -10%;
+  width: 220px; height: 220px;
+  background: radial-gradient(circle, rgba(45,225,194,0.18), transparent 70%);
+  filter: blur(20px);
+  pointer-events: none;
+}
+.now-playing-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 14px 36px rgba(45,225,194,0.18);
+  transform: translateY(-2px);
+}
+.np-cover {
+  width: 100px; min-width: 100px; height: 130px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.np-info { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.np-live {
+  display: flex; align-items: center; gap: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; color: var(--accent); margin-bottom: 6px;
+}
+.np-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: npPulse 1.8s ease-in-out infinite;
+}
+@keyframes npPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.np-title {
+  font-family: 'Comfortaa', sans-serif; font-weight: 700; font-size: 18px;
+  color: var(--text); margin-bottom: 4px;
+}
+.np-meta {
+  display: flex; gap: 12px; align-items: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted);
+}
+.np-stars { color: var(--accent); }
+
+/* ============================================================
+   FAVORITES SHOWCASE — its own glowing "display case" panel,
+   separate from the plain page background MostPlayed sits on
+   ============================================================ */
+.favorites-shelf {
+  position: relative;
+  border-radius: 28px;
+  padding: 22px 18px 20px;
+  background:
+    radial-gradient(ellipse 90% 80% at 50% -10%, rgba(123,92,255,0.16), transparent 65%),
+    radial-gradient(ellipse 70% 60% at 50% 110%, rgba(45,225,194,0.1), transparent 65%),
+    var(--bg-elevated);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255,224,145,0.25);
+  overflow: hidden;
+}
+.favorites-shelf-title {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  font-family: 'Comfortaa', sans-serif; font-weight: 700; font-size: 16px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  margin: 0 0 18px;
+  text-align: center;
+}
+.favorites-shelf-icon {
+  color: #ffe091;
+  text-shadow: 0 0 10px rgba(255,224,145,0.5);
+  font-size: 14px;
+}
+.fav-cover-wrap {
+  border-color: rgba(255,224,145,0.3) !important;
+}
+.fav-card:hover .fav-cover-wrap {
+  border-color: #ffe091 !important;
+  box-shadow: 0 16px 40px rgba(255,224,145,0.22) !important;
+  transform: translateY(-4px) scale(1.02);
+}
+.fav-rank-badge {
+  position: absolute; top: 8px; left: 8px;
+  min-width: 24px; height: 24px; padding: 0 6px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffe091, #ff9ecb, #9ecbff);
+  color: #04141f;
+  font-family: 'Comfortaa', sans-serif; font-weight: 700; font-size: 12px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 10px rgba(255,224,145,0.4);
+  z-index: 2;
+}
