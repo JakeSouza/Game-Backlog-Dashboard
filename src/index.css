@@ -160,7 +160,11 @@ body {
   color: var(--accent);
   letter-spacing: 0;
   text-shadow: 0 0 16px rgba(45,225,194,0.3);
+  font-variant-numeric: tabular-nums;
 }
+
+/* Numbers that update in place shouldn't shift width as digits change */
+.font-mono-tech, .mp-meta, .np-meta, .deal-badge { font-variant-numeric: tabular-nums; }
 
 /* ---- genre tag: pill ---- */
 .genre-tag {
@@ -232,6 +236,48 @@ body {
 /* ---- fade-in ---- */
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .fade-in { animation: fadeInUp 0.3s ease-out; }
+
+/* ============================================================
+   SKELETON LOADERS — shaped placeholders with a shimmer sweep
+   ============================================================ */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255,255,255,0.04);
+  border-radius: var(--radius-sm);
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(45,225,194,0.08), transparent);
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+.skeleton-line { border-radius: 6px; }
+
+/* ============================================================
+   STAGGERED ENTRANCE — cards arrive in sequence rather than
+   all at once. animation-fill-mode: both keeps them invisible
+   during their delay instead of flashing in then animating.
+   ============================================================ */
+@keyframes staggerIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.stagger-in {
+  animation: staggerIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ---- respect reduced-motion: keep the content, drop the motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  .stagger-in, .fade-in, .palette { animation: none !important; }
+  .skeleton::after { animation: none; }
+  .np-dot { animation: none; }
+  .pulse-glow { animation: none; }
+  * { transition-duration: 0.01ms !important; }
+}
 
 /* ---- pulse (sync running) ---- */
 @keyframes pulseGlow {
@@ -525,3 +571,115 @@ body {
   box-shadow: 0 2px 10px rgba(255,224,145,0.4);
   z-index: 2;
 }
+
+/* ============================================================
+   LAYERED DEPTH — real elevation instead of a single flat
+   box-shadow: a top inner highlight (simulates a light source
+   from above catching the glass edge) + two stacked ambient
+   shadows at different blur radii + a tight contact shadow.
+   Applied to every glass surface in the app.
+   ============================================================ */
+.cyber-panel, .hud-card, .rate-modal, .now-playing-card, .favorites-shelf, .palette {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.07),
+    0 1px 2px rgba(0,0,0,0.3),
+    0 8px 20px rgba(0,0,0,0.28),
+    0 20px 48px rgba(0,0,0,0.22);
+}
+.game-card {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    0 1px 2px rgba(0,0,0,0.25),
+    0 6px 16px rgba(0,0,0,0.22);
+}
+.game-card:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.09),
+    0 2px 4px rgba(0,0,0,0.25),
+    0 20px 44px rgba(45,225,194,0.16);
+}
+.mp-cover-wrap {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 4px 12px rgba(0,0,0,0.25);
+}
+.mp-card:hover .mp-cover-wrap {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.09), 0 16px 36px rgba(45,225,194,0.2);
+}
+
+/* ============================================================
+   COMMAND PALETTE (⌘K)
+   ============================================================ */
+.palette-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(4,20,32,0.7);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 12vh 16px 16px;
+}
+.palette {
+  width: 100%; max-width: 520px;
+  background: rgba(8,35,52,0.92);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid var(--border-hover);
+  border-radius: 20px;
+  overflow: hidden;
+  animation: paletteIn 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes paletteIn { from { opacity: 0; transform: translateY(-8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.palette-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  font-size: 15px;
+  padding: 16px 18px;
+  outline: none;
+}
+.palette-input::placeholder { color: var(--text-dim); }
+.palette-results { max-height: 50vh; overflow-y: auto; padding: 8px; }
+.palette-section { margin-bottom: 6px; }
+.palette-section-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-dim); padding: 8px 10px 4px;
+}
+.palette-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 10px; cursor: pointer;
+  color: var(--text); font-size: 13px;
+  transition: background 0.12s;
+}
+.palette-item:hover { background: var(--bg-hover); }
+.palette-item-flat { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.palette-item-cover {
+  width: 32px; height: 42px; border-radius: 6px; overflow: hidden; flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+.palette-item-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.palette-item-sub { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted); }
+.palette-empty { padding: 20px 10px; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted); }
+.palette-hint {
+  display: flex; justify-content: flex-end;
+  padding: 8px 14px; border-top: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);
+}
+.palette-hint kbd, .palette-kbd {
+  background: var(--bg-hover); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 6px; font-family: 'JetBrains Mono', monospace;
+}
+
+/* ============================================================
+   VIEW TRANSITIONS — native cross-fade between routes. Browsers
+   without support simply ignore these pseudo-elements entirely,
+   and the JS feature-detects before ever calling
+   document.startViewTransition(), so this is fully additive.
+   ============================================================ */
+::view-transition-old(root) {
+  animation: viewFadeOut 0.28s cubic-bezier(0.4, 0, 1, 1) both;
+}
+::view-transition-new(root) {
+  animation: viewFadeIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes viewFadeOut { to { opacity: 0; transform: scale(0.99) translateY(4px); } }
+@keyframes viewFadeIn { from { opacity: 0; transform: scale(1.008) translateY(-4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
