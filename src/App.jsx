@@ -7,7 +7,7 @@
 // Env: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
 // ============================================================
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { HashRouter, Routes, Route, NavLink, Link } from "react-router-dom";
+import { HashRouter, Routes, Route, NavLink, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { createClient } from "@supabase/supabase-js";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
@@ -31,6 +31,58 @@ function proxied(u) {
   return `https://wsrv.nl/?url=${encodeURIComponent(u)}&w=420&h=300&fit=cover&a=attention&q=80`;
 }
 
+// ---------------------------------------------------------------- skeletons
+// Shaped placeholders that match the real content's layout, so the page
+// doesn't reflow when data lands.
+function SkeletonCard() {
+  return (
+    <div className="game-card rounded-lg overflow-hidden">
+      <div className="skeleton" style={{ height: '9rem' }} />
+      <div className="p-2 sm:p-3">
+        <div className="skeleton skeleton-line" style={{ width: '80%', height: 14 }} />
+        <div className="skeleton skeleton-line" style={{ width: '45%', height: 10, marginTop: 8 }} />
+        <div className="flex gap-1 mt-2">
+          <div className="skeleton skeleton-line" style={{ width: 44, height: 14, borderRadius: 999 }} />
+          <div className="skeleton skeleton-line" style={{ width: 36, height: 14, borderRadius: 999 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SkeletonGrid({ count = 10 }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+      {Array.from({ length: count }).map((_, i) => <SkeletonCard key={i} />)}
+    </div>
+  );
+}
+
+function SkeletonHome() {
+  return (
+    <>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="hud-card p-4">
+            <div className="skeleton skeleton-line" style={{ width: '55%', height: 10 }} />
+            <div className="skeleton skeleton-line" style={{ width: '40%', height: 26, marginTop: 10 }} />
+          </div>
+        ))}
+      </div>
+      <div className="skeleton skeleton-line mb-3" style={{ width: 140, height: 13 }} />
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 sm:gap-4 mb-6">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i}>
+            <div className="skeleton" style={{ aspectRatio: '3/4', borderRadius: 'var(--radius-sm)' }} />
+            <div className="skeleton skeleton-line" style={{ width: '85%', height: 12, marginTop: 8 }} />
+            <div className="skeleton skeleton-line" style={{ width: '50%', height: 10, marginTop: 5 }} />
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function GameImg({ src, steamAppid, alt = "", className }) {
   const stages = [
     steamAppid ? `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppid}/library_600x900.jpg` : null,
@@ -38,10 +90,18 @@ function GameImg({ src, steamAppid, alt = "", className }) {
     FALLBACK,
   ].filter(Boolean);
   const [idx, setIdx] = useState(0);
+  const advance = () => setIdx((i) => Math.min(i + 1, stages.length - 1));
   return (
     <img src={stages[idx]} alt={alt} className={className}
       loading="lazy"
-      onError={() => setIdx((i) => Math.min(i + 1, stages.length - 1))} />
+      onError={advance}
+      onLoad={(e) => {
+        // Some Steam appids serve a "successful" 200 response that's actually
+        // a tiny blank placeholder rather than real art — no error ever fires
+        // for that, so treat a suspiciously small image as a failure too.
+        const img = e.currentTarget;
+        if (idx === 0 && img.naturalWidth > 0 && img.naturalWidth < 40) advance();
+      }} />
   );
 }
 
@@ -129,10 +189,21 @@ function RateModal({ game, currentRating, currentPlaytime, onClose, onSaved }) {
   const [precision, setPrecision] = useState(0.25); // default quarter-star
   const [hours, setHours] = useState(currentPlaytime != null ? String(+(currentPlaytime / 60).toFixed(1)) : "");
   const [favoriteRank, setFavoriteRank] = useState(currentRating?.favorite_rank || null);
+  const [steamId, setSteamId] = useState(game.steam_appid ? String(game.steam_appid) : "");
   const [saving, setSaving] = useState(false);
 
   async function save() {
     setSaving(true);
+
+    // Steam ID correction — only writes if it actually changed, so this
+    // never accidentally clears a value sync-games already set correctly.
+    const newSteamId = steamId.trim() ? parseInt(steamId.trim(), 10) : null;
+    if (newSteamId !== (game.steam_appid || null)) {
+      await supabase.from("games")
+        .update({ steam_appid: newSteamId, updated_at: new Date().toISOString() })
+        .eq("id", game.id);
+    }
+
     // If assigning a favorite rank, clear it from whoever currently holds it
     // first — avoids the unique constraint conflict, and means picking a
     // rank someone else has just bumps them out rather than erroring.
@@ -250,6 +321,17 @@ function RateModal({ game, currentRating, currentPlaytime, onClose, onSaved }) {
             onChange={(e) => setHours(e.target.value.replace(/[^0-9.]/g, ''))}
             placeholder="e.g. 12.5"
             inputMode="decimal"
+            className="cyber-input w-full"
+          />
+        </div>
+
+        <div className="mb-5">
+          <div className="text-[11px] font-mono-tech mb-2 uppercase tracking-wider" style={{color:'var(--text-muted)'}}>// Steam ID</div>
+          <input
+            value={steamId}
+            onChange={(e) => setSteamId(e.target.value.replace(/[^0-9]/g, ''))}
+            placeholder="Fixes wrong/missing cover art"
+            inputMode="numeric"
             className="cyber-input w-full"
           />
         </div>
@@ -528,6 +610,27 @@ function SyncDealsButton() {
 }
 
 // ------------------------------------------------------------------- shell
+// NavLink wrapper that runs navigation inside a native View Transition when
+// the browser supports it (and the user hasn't asked for reduced motion) —
+// works regardless of react-router-dom's exact version, since it just uses
+// the standard preventDefault()-then-navigate() contract Link already honors.
+function TNavLink({ to, ...props }) {
+  const navigate = useNavigate();
+  return (
+    <NavLink
+      to={to}
+      onClick={(e) => {
+        if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey) return;
+        const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        if (!document.startViewTransition || reduced) return; // let default navigation happen
+        e.preventDefault();
+        document.startViewTransition(() => navigate(to));
+      }}
+      {...props}
+    />
+  );
+}
+
 function TopNav({ onSyncDone }) {
   const link = ({ isActive }) =>
     `px-3 py-2 rounded text-sm font-display font-bold uppercase tracking-wider transition ${
@@ -537,12 +640,20 @@ function TopNav({ onSyncDone }) {
       <Link to="/" className="mr-4 text-lg font-display font-black tracking-widest" style={{color:'var(--accent)'}}>
         ◈ BACKLOG<span style={{color:'var(--text-muted)'}}>.EXE</span>
       </Link>
-      <NavLink to="/" end className={link}>Home</NavLink>
-      <NavLink to="/backlog" className={link}>Backlog</NavLink>
-      <NavLink to="/recommend" className={link}>Recommend</NavLink>
-      <NavLink to="/wishlist" className={link}>Wishlist</NavLink>
-      <NavLink to="/upcoming" className={link}>Upcoming</NavLink>
+      <TNavLink to="/" end className={link}>Home</TNavLink>
+      <TNavLink to="/backlog" className={link}>Backlog</TNavLink>
+      <TNavLink to="/recommend" className={link}>Recommend</TNavLink>
+      <TNavLink to="/wishlist" className={link}>Wishlist</TNavLink>
+      <TNavLink to="/upcoming" className={link}>Upcoming</TNavLink>
       <div className="ml-auto flex items-center gap-2">
+        <button
+          onClick={() => window.dispatchEvent(new Event("open-command-palette"))}
+          className="cyber-btn flex items-center gap-2 px-3 py-2 rounded text-xs"
+          style={{color:'var(--text-muted)'}}
+        >
+          <span>Search</span>
+          <kbd className="palette-kbd">⌘K</kbd>
+        </button>
         <SyncDealsButton />
         <SyncButton onDone={onSyncDone} />
       </div>
@@ -559,17 +670,179 @@ function BottomNav({ onSyncDone }) {
         <Link to="/" className="text-base font-display font-black tracking-widest" style={{color:'var(--accent)'}}>
           ◈ BACKLOG<span style={{color:'var(--text-muted)'}}>.EXE</span>
         </Link>
-        <SyncButton onDone={onSyncDone} compact />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => window.dispatchEvent(new Event("open-command-palette"))}
+            className="cyber-btn px-2.5 py-2 rounded text-xs"
+            aria-label="Search"
+          >
+            🔍
+          </button>
+          <SyncButton onDone={onSyncDone} compact />
+        </div>
       </div>
       {/* mobile bottom nav */}
       <nav className="bottom-nav md:hidden">
-        <NavLink to="/" end className={link}><NavIcon name="home" /><span>Home</span></NavLink>
-        <NavLink to="/backlog" className={link}><NavIcon name="backlog" /><span>Backlog</span></NavLink>
-        <NavLink to="/recommend" className={link}><NavIcon name="recommend" /><span>Recs</span></NavLink>
-        <NavLink to="/wishlist" className={link}><NavIcon name="wishlist" /><span>Wish</span></NavLink>
-        <NavLink to="/upcoming" className={link}><NavIcon name="upcoming" /><span>Soon</span></NavLink>
+        <TNavLink to="/" end className={link}><NavIcon name="home" /><span>Home</span></TNavLink>
+        <TNavLink to="/backlog" className={link}><NavIcon name="backlog" /><span>Backlog</span></TNavLink>
+        <TNavLink to="/recommend" className={link}><NavIcon name="recommend" /><span>Recs</span></TNavLink>
+        <TNavLink to="/wishlist" className={link}><NavIcon name="wishlist" /><span>Wish</span></TNavLink>
+        <TNavLink to="/upcoming" className={link}><NavIcon name="upcoming" /><span>Soon</span></TNavLink>
       </nav>
     </>
+  );
+}
+
+// ---------------------------------------------------------------- ⌘K palette
+const PALETTE_PAGES = [
+  { label: "Home", to: "/", keywords: "home dashboard stats" },
+  { label: "Backlog", to: "/backlog", keywords: "backlog owned library games" },
+  { label: "Wishlist", to: "/wishlist", keywords: "wishlist want deals prices" },
+  { label: "Upcoming", to: "/upcoming", keywords: "upcoming releases coming soon" },
+  { label: "Recommend", to: "/recommend", keywords: "recommend play next discover" },
+];
+
+function CommandPalette({ onSyncDone }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [gameResults, setGameResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const inputRef = useRef(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setOpen((o) => !o);
+      } else if (e.key === "Escape") {
+        setOpen(false);
+      }
+    }
+    function onOpenEvent() { setOpen(true); }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("open-command-palette", onOpenEvent);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("open-command-palette", onOpenEvent);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      setQ("");
+      setGameResults([]);
+      setTimeout(() => inputRef.current?.focus(), 30);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (q.trim().length < 2) { setGameResults([]); return; }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      const { data } = await supabase
+        .from("games")
+        .select("id,title,cover_url,steam_appid,library_entries(playtime_forever),ratings(status,user_id)")
+        .ilike("title", `%${q.trim()}%`)
+        .limit(6);
+      setGameResults(data || []);
+      setSearching(false);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  function go(to) {
+    setOpen(false);
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (document.startViewTransition && !reduced) {
+      document.startViewTransition(() => navigate(to));
+    } else {
+      navigate(to);
+    }
+  }
+
+  async function runSync() {
+    setOpen(false);
+    await supabase.functions.invoke("sync-games", { method: "POST" });
+    onSyncDone?.();
+  }
+  async function runSyncDeals() {
+    setOpen(false);
+    await supabase.functions.invoke("sync-deals", { method: "POST" });
+    onSyncDone?.();
+  }
+
+  const filteredPages = PALETTE_PAGES.filter((p) =>
+    !q.trim() || (p.label + " " + p.keywords).toLowerCase().includes(q.trim().toLowerCase())
+  );
+  const actions = [
+    { label: "↻ Sync now (Steam + RAWG)", run: runSync, keywords: "sync steam refresh" },
+    { label: "💲 Sync deal prices", run: runSyncDeals, keywords: "sync deals prices itad" },
+  ].filter((a) => !q.trim() || (a.label + " " + a.keywords).toLowerCase().includes(q.trim().toLowerCase()));
+
+  if (!open) return null;
+
+  return (
+    <div className="palette-overlay" onClick={() => setOpen(false)}>
+      <div className="palette" onClick={(e) => e.stopPropagation()}>
+        <input
+          ref={inputRef}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Jump to a page, a game, or run a sync…"
+          className="palette-input"
+        />
+        <div className="palette-results">
+          {gameResults.length > 0 && (
+            <div className="palette-section">
+              <div className="palette-section-label">Games{searching ? " · searching…" : ""}</div>
+              {gameResults.map((g) => {
+                const owned = (g.library_entries || []).length > 0;
+                const wishlisted = (g.ratings || []).some((r) => r.status === "wishlist");
+                const dest = owned ? "/backlog" : wishlisted ? "/wishlist" : "/backlog";
+                return (
+                  <div key={g.id} className="palette-item" onClick={() => go(`${dest}?q=${encodeURIComponent(g.title)}`)}>
+                    <div className="palette-item-cover">
+                      <GameImg src={g.cover_url} steamAppid={g.steam_appid} className="w-full h-full object-cover" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="palette-item-title">{g.title}</div>
+                      <div className="palette-item-sub">{owned ? "In Backlog" : wishlisted ? "In Wishlist" : "Not tracked yet"}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {filteredPages.length > 0 && (
+            <div className="palette-section">
+              <div className="palette-section-label">Pages</div>
+              {filteredPages.map((p) => (
+                <div key={p.to} className="palette-item palette-item-flat" onClick={() => go(p.to)}>
+                  {p.label}
+                </div>
+              ))}
+            </div>
+          )}
+          {actions.length > 0 && (
+            <div className="palette-section">
+              <div className="palette-section-label">Actions</div>
+              {actions.map((a) => (
+                <div key={a.label} className="palette-item palette-item-flat" onClick={a.run}>
+                  {a.label}
+                </div>
+              ))}
+            </div>
+          )}
+          {q.trim().length >= 2 && !searching && gameResults.length === 0 && filteredPages.length === 0 && actions.length === 0 && (
+            <p className="palette-empty">No matches for "{q}"</p>
+          )}
+        </div>
+        <div className="palette-hint">
+          <kbd>esc</kbd> to close
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -639,8 +912,8 @@ function FavoritesGrid({ rows }) {
         <span className="favorites-shelf-icon">✦</span>
       </h2>
       <div className="grid grid-cols-3 sm:grid-cols-5 gap-4 sm:gap-5">
-        {favs.map((r) => (
-          <div key={r.game.id} className="mp-card fav-card">
+        {favs.map((r, i) => (
+          <div key={r.game.id} className="mp-card fav-card stagger-in" style={{ animationDelay: `${i * 60}ms` }}>
             <div className="mp-cover-wrap fav-cover-wrap">
               <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-full object-cover" />
               <span className="fav-rank-badge">{r.rating.favorite_rank}</span>
@@ -666,7 +939,7 @@ function MostPlayedGrid({ rows }) {
       <h2 className="font-display font-bold text-sm uppercase tracking-wider mb-3" style={{color:'var(--text-muted)'}}>Most Played</h2>
       <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 sm:gap-4">
         {top.map((r, i) => (
-          <div key={r.game.id} className="mp-card">
+          <div key={r.game.id} className="mp-card stagger-in" style={{ animationDelay: `${i * 45}ms` }}>
             <div className="mp-cover-wrap">
               <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-full object-cover" />
               <span className="mp-rank">{i + 1}</span>
@@ -729,7 +1002,15 @@ function Home({ version, onSyncDone }) {
     return { total, played, hours: hours.toFixed(0), avg, genres };
   }, [rows]);
 
-  if (loading) return <Layout onSyncDone={onSyncDone}><p className="font-mono-tech text-sm" style={{color:'var(--text-muted)'}}>Loading…</p></Layout>;
+  if (loading) return (
+    <Layout onSyncDone={onSyncDone}>
+      <div className="mb-6">
+        <div className="skeleton skeleton-line" style={{ width: 180, height: 26 }} />
+      </div>
+      <div className="scan-bar mb-6" />
+      <SkeletonHome />
+    </Layout>
+  );
 
   const COLORS = ["#2de1c2", "#7b5cff", "#4fb8ff", "#4ddba3", "#ffcf5c", "#ff5a7a", "#9b6bff", "#6fa39c"];
 
@@ -785,7 +1066,8 @@ function Home({ version, onSyncDone }) {
 // --------------------------------------------------------------- Backlog
 function Backlog({ version, onSyncDone }) {
   const { rows, setRows, loading } = useLibrary(version);
-  const [q, setQ] = useState("");
+  const [searchParams] = useSearchParams();
+  const [q, setQ] = useState(searchParams.get("q") || "");
   const [genre, setGenre] = useState("All");
   const [status, setStatus] = useState("All");
   const [sort, setSort] = useState("playtime");
@@ -831,16 +1113,24 @@ function Backlog({ version, onSyncDone }) {
 
   // Quick inline star rating (click stars on card) — quarter-star precision
   async function quickRate(gameId, newScore) {
-    setRows((prev) => prev.map((r) =>
-      r.game?.id === gameId
-        ? { ...r, rating: { ...(r.rating || {}), score: newScore, status: r.rating?.status || "played" } }
-        : r
-    ));
-    await supabase.from("ratings").upsert({
+    // Optimistic: paint the new rating immediately, then reconcile. Snapshot
+    // the previous value first so a failed write can roll back instead of
+    // leaving the UI showing a rating that was never saved.
+    let previous = null;
+    setRows((prev) => prev.map((r) => {
+      if (r.game?.id !== gameId) return r;
+      previous = r.rating;
+      return { ...r, rating: { ...(r.rating || {}), score: newScore, status: r.rating?.status || "played" } };
+    }));
+    const { error } = await supabase.from("ratings").upsert({
       game_id: gameId, user_id: "me", score: newScore,
       status: "played", logged_at: new Date().toISOString().slice(0, 10),
       updated_at: new Date().toISOString(),
     }, { onConflict: "game_id,user_id" });
+    if (error) {
+      setRows((prev) => prev.map((r) => (r.game?.id === gameId ? { ...r, rating: previous } : r)));
+      console.error("quickRate failed, rolled back:", error.message);
+    }
   }
 
   return (
@@ -869,10 +1159,11 @@ function Backlog({ version, onSyncDone }) {
           </select>
         </div>
 
-        {loading ? <p className="font-mono-tech text-sm" style={{color:'var(--text-muted)'}}>Loading…</p> : (
+        {loading ? <SkeletonGrid count={10} /> : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-            {filtered.map((r) => (
-              <div key={r.game.id} className="game-card rounded-lg overflow-hidden cursor-pointer"
+            {filtered.map((r, i) => (
+              <div key={r.game.id} className="game-card rounded-lg overflow-hidden cursor-pointer stagger-in"
+                   style={{ animationDelay: `${Math.min(i, 14) * 35}ms` }}
                    onClick={() => setRateGame({ game: r.game, rating: r.rating, playtime_forever: r.playtime_forever })}>
                 <div className="card-img-wrap">
                   <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-28 sm:h-36 object-cover" />
@@ -999,7 +1290,8 @@ function Recommend({ version, onSyncDone }) {
               const matchPct = r.score ? Math.min(100, (Number(r.score) / 10) * 100) : 0;
               const expanded = expandedId === gid;
               return (
-                <div key={tab === "play" ? r.game_id : i} className="game-card rounded-lg overflow-hidden">
+                <div key={tab === "play" ? r.game_id : i} className="game-card rounded-lg overflow-hidden stagger-in"
+                     style={{ animationDelay: `${Math.min(i, 14) * 35}ms` }}>
                   <div className="card-img-wrap">
                     <GameImg src={r.cover_url} className="w-full h-28 sm:h-36 object-cover" />
                   </div>
@@ -1352,11 +1644,13 @@ function AddGameSearch({ onAdded }) {
 function Wishlist({ version, onSyncDone }) {
   const [wlVersion, setWlVersion] = useState(0);
   const rows = useWishlist(`${version}:${wlVersion}`);
-  const [q, setQ] = useState("");
-  const [sortBy, setSortBy] = useState("name");
+  const [searchParams] = useSearchParams();
+  const [q, setQ] = useState(searchParams.get("q") || "");
+  const [sortBy, setSortBy] = useState("discount");
+  const [removed, setRemoved] = useState({});
 
   const filtered = useMemo(() => {
-    let r = rows.filter((x) => x.game);
+    let r = rows.filter((x) => x.game && !removed[x.game.id]);
     if (q) r = r.filter((x) => x.game.title.toLowerCase().includes(q.toLowerCase()));
     const sorted = [...r];
     if (sortBy === "name") {
@@ -1374,10 +1668,18 @@ function Wishlist({ version, onSyncDone }) {
       sorted.sort((a, b) => (b.game.deal_cut ?? -1) - (a.game.deal_cut ?? -1));
     }
     return sorted;
-  }, [rows, q, sortBy]);
+  }, [rows, q, sortBy, removed]);
 
+  // Optimistically drop the card immediately, then delete. Previously this
+  // only hit the database and never touched local state, so the removed game
+  // stayed visible until a navigation or refetch.
   async function removeWishlist(gameId) {
-    await supabase.from("ratings").delete().eq("game_id", gameId).eq("user_id", "me");
+    setRemoved((p) => ({ ...p, [gameId]: true }));
+    const { error } = await supabase.from("ratings").delete().eq("game_id", gameId).eq("user_id", "me");
+    if (error) {
+      setRemoved((p) => { const n = { ...p }; delete n[gameId]; return n; });
+      console.error("removeWishlist failed, restored:", error.message);
+    }
   }
 
   return (
@@ -1407,8 +1709,9 @@ function Wishlist({ version, onSyncDone }) {
           </p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-            {filtered.map((r) => (
-              <div key={r.game.id} className="game-card rounded-lg overflow-hidden">
+            {filtered.map((r, i) => (
+              <div key={r.game.id} className="game-card rounded-lg overflow-hidden stagger-in"
+                   style={{ animationDelay: `${Math.min(i, 14) * 35}ms` }}>
                 <div className="card-img-wrap">
                   <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-28 sm:h-36 object-cover" />
                   <div className="absolute top-1.5 right-1.5 z-10">
@@ -1453,6 +1756,7 @@ export default function App() {
   const bump = () => setVersion((v) => v + 1);
   return (
     <HashRouter>
+      <CommandPalette onSyncDone={bump} />
       <Routes>
         <Route path="/" element={<Home version={version} onSyncDone={bump} />} />
         <Route path="/backlog" element={<Backlog version={version} onSyncDone={bump} />} />
