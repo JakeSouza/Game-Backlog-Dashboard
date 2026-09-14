@@ -1647,8 +1647,6 @@ function Wishlist({ version, onSyncDone }) {
   const [searchParams] = useSearchParams();
   const [q, setQ] = useState(searchParams.get("q") || "");
   const [sortBy, setSortBy] = useState("discount");
-  const [removed, setRemoved] = useState({});
-
   const filtered = useMemo(() => {
     let r = rows.filter((x) => x.game && !removed[x.game.id]);
     if (q) r = r.filter((x) => x.game.title.toLowerCase().includes(q.toLowerCase()));
@@ -1673,6 +1671,7 @@ function Wishlist({ version, onSyncDone }) {
   // Optimistically drop the card immediately, then delete. Previously this
   // only hit the database and never touched local state, so the removed game
   // stayed visible until a navigation or refetch.
+  const [removed, setRemoved] = useState({});
   async function removeWishlist(gameId) {
     setRemoved((p) => ({ ...p, [gameId]: true }));
     const { error } = await supabase.from("ratings").delete().eq("game_id", gameId).eq("user_id", "me");
