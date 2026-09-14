@@ -744,8 +744,21 @@ function CommandPalette({ onSyncDone }) {
         .from("games")
         .select("id,title,cover_url,steam_appid,library_entries(playtime_forever),ratings(status,user_id)")
         .ilike("title", `%${q.trim()}%`)
-        .limit(6);
-      setGameResults(data || []);
+        .limit(10);
+      // Defensive against historical duplicate games rows (same title,
+      // only one actually linked to library_entries/ratings) — when two
+      // results share a title, keep whichever one actually has tracking
+      // data rather than trusting result order.
+      const byTitle = new Map();
+      for (const g of data || []) {
+        const key = g.title.toLowerCase();
+        const existing = byTitle.get(key);
+        const hasData = (g.library_entries?.length || g.ratings?.length) > 0;
+        if (!existing || (hasData && !((existing.library_entries?.length || existing.ratings?.length) > 0))) {
+          byTitle.set(key, g);
+        }
+      }
+      setGameResults(Array.from(byTitle.values()).slice(0, 6));
       setSearching(false);
     }, 250);
     return () => clearTimeout(t);
@@ -1647,6 +1660,8 @@ function Wishlist({ version, onSyncDone }) {
   const [searchParams] = useSearchParams();
   const [q, setQ] = useState(searchParams.get("q") || "");
   const [sortBy, setSortBy] = useState("discount");
+  const [removed, setRemoved] = useState({});
+
   const filtered = useMemo(() => {
     let r = rows.filter((x) => x.game && !removed[x.game.id]);
     if (q) r = r.filter((x) => x.game.title.toLowerCase().includes(q.toLowerCase()));
@@ -1671,7 +1686,6 @@ function Wishlist({ version, onSyncDone }) {
   // Optimistically drop the card immediately, then delete. Previously this
   // only hit the database and never touched local state, so the removed game
   // stayed visible until a navigation or refetch.
-  const [removed, setRemoved] = useState({});
   async function removeWishlist(gameId) {
     setRemoved((p) => ({ ...p, [gameId]: true }));
     const { error } = await supabase.from("ratings").delete().eq("game_id", gameId).eq("user_id", "me");
