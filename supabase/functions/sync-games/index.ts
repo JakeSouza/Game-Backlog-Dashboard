@@ -13,6 +13,16 @@
 //
 // Deploy:
 //   supabase functions deploy sync-games --no-verify-jwt
+//
+// ENRICHMENT STRATEGY (Steam = source of truth):
+//   1. For any game with a steam_appid, call Steam appdetails first.
+//      Steam provides: name, cover (header_image), release_date,
+//      genres, short_description, metacritic score.
+//   2. RAWG fills in anything Steam doesn't have well: community
+//      rating, platform list, and cover for non-Steam games.
+//   3. For Backloggd-only / non-Steam games, RAWG is the sole enricher.
+//   4. RAWG search now requests 5 results and picks the best title match
+//      instead of blindly taking the first result.
 // ============================================================
 
 const REST = (path: string) => `${Deno.env.get("SUPABASE_URL")}/rest/v1/${path}`;
@@ -222,21 +232,96 @@ async function steamLibrary() {
   return (await r.json()).response.games || [];
 }
 
+// ---------------------------------------------------------------- Steam appdetails
+// Fetches the full Store page data for a single appid.
+// Returns the fields we care about, or null on failure.
+// Used as primary enrichment source for Steam games.
+// Rate-limit: Steam allows ~200 req/5min; we sleep 300ms between calls.
+async function steamAppDetails(appid: number): Promise<{
+  cover_url: string | null;
+  released: string | null;
+  genres: string[];
+  description: string | null;
+  metacritic: number | null;
+} | null> {
+  try {
+    const r = await fetch(
+      `https://store.steampowered.com/api/appdetails?appids=${appid}&l=english`,
+    );
+    if (!r.ok) return null;
+    const data = (await r.json())[String(appid)];
+    if (!data?.success || !data?.data) return null;
+    const d = data.data;
+    // Steam's header image is always landscape (460×215) but is present for
+    // virtually every app. library_600x900.jpg is portrait and better for
+    // cards but only exists for newer/popular titles — the frontend already
+    // tries that first via GameImg, so we store header_image as cover_url here
+    // and let the UI use library_600x900 when available.
+    const cover_url = d.header_image || null;
+    // released: Steam gives { coming_soon, date } — "date" is a string like
+    // "18 Sep, 2015" or "Q4 2025". Parse to ISO when it looks like a real date.
+    let released: string | null = null;
+    if (d.release_date?.date && !d.release_date?.coming_soon) {
+      const parsed = new Date(d.release_date.date);
+      if (!isNaN(parsed.getTime())) {
+        released = parsed.toISOString().slice(0, 10);
+      }
+    }
+    const genres = (d.genres || []).map((g: any) => g.description as string);
+    const description = (d.short_description as string) || null;
+    const metacritic = d.metacritic?.score ?? null;
+    return { cover_url, released, genres, description, metacritic };
+  } catch {
+    return null;
+  }
+}
+
 // ------------------------------------------------------------------ RAWG
+// Searches RAWG for a game by title.
+// Requests 5 results and picks the best title match rather than blindly
+// taking the first. Falls back to the first result if no title closely
+// matches (so behaviour is no worse than before for unusual names).
+const normTitle = (s = "") =>
+  s.toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+function titleScore(query: string, candidate: string): number {
+  const q = normTitle(query);
+  const c = normTitle(candidate);
+  if (q === c) return 3;                          // exact match
+  if (c.startsWith(q) || q.startsWith(c)) return 2; // prefix match
+  if (c.includes(q) || q.includes(c)) return 1;  // substring match
+  return 0;
+}
+
 async function rawgSearch(title: string) {
   const u = new URL("https://api.rawg.io/api/games");
   u.searchParams.set("key", Deno.env.get("RAWG_API_KEY")!);
   u.searchParams.set("search", title);
-  u.searchParams.set("page_size", "1");
+  u.searchParams.set("page_size", "5"); // fetch a few so we can pick the best match
   const r = await fetch(u);
   if (!r.ok) return null;
-  const g = (await r.json()).results?.[0];
-  if (!g) return null;
+  const results: any[] = (await r.json()).results || [];
+  if (!results.length) return null;
+
+  // Pick the result whose title best matches the query; break ties by index
+  // (RAWG already orders by relevance, so lower index wins on equal score).
+  let best = results[0];
+  let bestScore = titleScore(title, best.name);
+  for (let i = 1; i < results.length; i++) {
+    const s = titleScore(title, results[i].name);
+    if (s > bestScore) { best = results[i]; bestScore = s; }
+  }
+
   return {
-    rawg_id: g.id, cover_url: g.background_image || null,
-    rawg_rating: g.rating ?? null, released: g.released || null,
-    genres: (g.genres || []).map((x: any) => x.name),
-    platforms: (g.platforms || []).map((x: any) => x.platform.name),
+    rawg_id: best.id,
+    cover_url: best.background_image || null,
+    rawg_rating: best.rating ?? null,
+    released: best.released || null,
+    genres: (best.genres || []).map((x: any) => x.name),
+    platforms: (best.platforms || []).map((x: any) => x.platform.name),
   };
 }
 
@@ -349,7 +434,7 @@ Deno.serve(async (req) => {
     const existing: any[] = [];
     for (let i = 0; i < appids.length; i += 50) {
       const batch = appids.slice(i, i + 50).join(",");
-      const r = await fetch(REST(`games?steam_appid=in.(${batch})&select=id,steam_appid,rawg_id`), { headers: h() });
+      const r = await fetch(REST(`games?steam_appid=in.(${batch})&select=id,steam_appid,rawg_id,cover_url`), { headers: h() });
       if (r.ok) existing.push(...(await r.json()));
     }
     const known = new Map(existing.map((g) => [String(g.steam_appid), g]));
@@ -383,14 +468,49 @@ Deno.serve(async (req) => {
         }),
       });
 
-      if (!k?.rawg_id && enrichBudget > 0) {
+      // Enrich games that don't yet have a rawg_id OR are missing a cover.
+      // Steam is tried first (cheaper, no quota, better art); RAWG fills gaps.
+      if ((!k?.rawg_id || !k?.cover_url) && enrichBudget > 0) {
         enrichBudget--;
-        await sleep(250);
-        const meta = await rawgSearch(s.name);
-        if (meta) {
+        await sleep(300);
+
+        // --- Step 1: Steam appdetails (primary) ---
+        const steamMeta = await steamAppDetails(s.appid);
+
+        // --- Step 2: RAWG (fills rawg_id, rawg_rating, platforms; better
+        //     cover for non-Steam-CDN games, not used if Steam already has one)
+        let rawgMeta: Awaited<ReturnType<typeof rawgSearch>> = null;
+        if (!k?.rawg_id) {
+          await sleep(250);
+          rawgMeta = await rawgSearch(s.name);
+        }
+
+        // Merge: Steam wins on cover, release date, genres, description.
+        // RAWG wins on rawg_id, rawg_rating, platforms.
+        // If Steam has no cover we fall back to RAWG's background_image.
+        const patch: Record<string, unknown> = { updated_at: now() };
+        if (steamMeta) {
+          if (steamMeta.cover_url) patch.cover_url = steamMeta.cover_url;
+          if (steamMeta.released) patch.released = steamMeta.released;
+          if (steamMeta.genres?.length) patch.genres = steamMeta.genres;
+          if (steamMeta.description) patch.description = steamMeta.description;
+          if (steamMeta.metacritic != null) patch.metacritic = steamMeta.metacritic;
+        }
+        if (rawgMeta) {
+          patch.rawg_id = rawgMeta.rawg_id;
+          if (rawgMeta.rawg_rating != null) patch.rawg_rating = rawgMeta.rawg_rating;
+          if (rawgMeta.platforms?.length) patch.platforms = rawgMeta.platforms;
+          // Only use RAWG cover if Steam didn't provide one
+          if (!patch.cover_url && rawgMeta.cover_url) patch.cover_url = rawgMeta.cover_url;
+          // Only use RAWG release date/genres as fallback
+          if (!patch.released && rawgMeta.released) patch.released = rawgMeta.released;
+          if (!(patch.genres as string[])?.length && rawgMeta.genres?.length) patch.genres = rawgMeta.genres;
+        }
+
+        if (Object.keys(patch).length > 1) { // more than just updated_at
           await fetch(REST(`games?id=eq.${id}`), {
             method: "PATCH", headers: h({ Prefer: "return=minimal" }),
-            body: JSON.stringify({ ...meta, updated_at: now() }),
+            body: JSON.stringify(patch),
           });
           enriched++;
         }
@@ -406,6 +526,8 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Backloggd-only games (not in Steam library): use RAWG as the sole
+    // enricher since we have no steam_appid to look up.
     let blOnly = 0;
     for (const r of bl) {
       const found = existing.find((g) => norm((g as any).title) === norm(r.title)) ||
@@ -421,6 +543,18 @@ Deno.serve(async (req) => {
           method: "POST", headers: h(UPSERT),
           body: JSON.stringify({ game_id: gid, user_id: "me", score: r.score ?? 0, status: r.status, updated_at: now() }),
         });
+        // Enrich backloggd-only game via RAWG (no Steam appid to use)
+        if (enrichBudget > 0) {
+          enrichBudget--;
+          await sleep(250);
+          const rawgMeta = await rawgSearch(r.title);
+          if (rawgMeta) {
+            await fetch(REST(`games?id=eq.${gid}`), {
+              method: "PATCH", headers: h({ Prefer: "return=minimal" }),
+              body: JSON.stringify({ ...rawgMeta, updated_at: now() }),
+            });
+          }
+        }
         blOnly++;
       }
     }
