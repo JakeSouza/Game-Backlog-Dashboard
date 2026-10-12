@@ -83,24 +83,51 @@ function SkeletonHome() {
   );
 }
 
+// GameImg — cascading image source with automatic fallback.
+//
+// Fallback chain (tried in order, moves to next on error or blank 200):
+//   1. Steam library_600x900.jpg  — portrait art, great for cards, not on all titles
+//   2. Steam header.jpg           — landscape, present on virtually every Steam app
+//   3. cover_url (via wsrv proxy) — RAWG background_image or Steam header stored in DB
+//   4. Generic FALLBACK photo
+//
+// Why this order: portrait art looks best in the card grid; header.jpg is the
+// safe Steam fallback before touching the external RAWG CDN; RAWG's
+// background_image (stored as cover_url) comes last among real sources.
 function GameImg({ src, steamAppid, alt = "", className }) {
   const stages = [
     steamAppid ? `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppid}/library_600x900.jpg` : null,
+    steamAppid ? `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppid}/header.jpg` : null,
     proxied(src),
     FALLBACK,
   ].filter(Boolean);
   const [idx, setIdx] = useState(0);
+  // Reset to stage 0 when the game changes so a previously-failed stage for
+  // one game is not carried over to the next game rendered in the same slot.
+  const prevSteamAppid = useRef(steamAppid);
+  const prevSrc = useRef(src);
+  if (prevSteamAppid.current !== steamAppid || prevSrc.current !== src) {
+    prevSteamAppid.current = steamAppid;
+    prevSrc.current = src;
+    // Mutate directly during render (safe here — only changes derived state)
+    // so the first paint uses stage 0 rather than the stale stage from the
+    // previous game.
+    if (idx !== 0) {
+      // Can't call setIdx during render; instead we rely on the key pattern.
+      // Callers should key GameImg by game id so it unmounts/remounts on change.
+    }
+  }
   const advance = () => setIdx((i) => Math.min(i + 1, stages.length - 1));
   return (
     <img src={stages[idx]} alt={alt} className={className}
       loading="lazy"
       onError={advance}
       onLoad={(e) => {
-        // Some Steam appids serve a "successful" 200 response that's actually
-        // a tiny blank placeholder rather than real art — no error ever fires
-        // for that, so treat a suspiciously small image as a failure too.
+        // Some Steam CDN paths serve a "successful" 200 response that's actually
+        // a tiny blank placeholder rather than real art — no error fires for that,
+        // so treat a suspiciously small image as a failure too.
         const img = e.currentTarget;
-        if (idx === 0 && img.naturalWidth > 0 && img.naturalWidth < 40) advance();
+        if (img.naturalWidth > 0 && img.naturalWidth < 40) advance();
       }} />
   );
 }
@@ -1306,7 +1333,7 @@ function Recommend({ version, onSyncDone }) {
                 <div key={tab === "play" ? r.game_id : i} className="game-card rounded-lg overflow-hidden stagger-in"
                      style={{ animationDelay: `${Math.min(i, 14) * 35}ms` }}>
                   <div className="card-img-wrap">
-                    <GameImg src={r.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+                    <GameImg key={r.game_id || r.rawg_id || r.title} src={r.cover_url} steamAppid={r.steam_appid || null} className="w-full h-28 sm:h-36 object-cover" />
                   </div>
                   <div className="p-2 sm:p-3">
                     <div className="text-xs sm:text-sm font-display font-bold truncate" style={{color:'var(--text)'}}>{r.title}</div>
@@ -1400,7 +1427,7 @@ function Upcoming({ version, onSyncDone }) {
               return (
                 <div key={r.id} className="game-card rounded-lg overflow-hidden">
                   <div className="card-img-wrap">
-                    <GameImg src={r.cover_url} className="w-full h-28 sm:h-36 object-cover" />
+                    <GameImg key={r.rawg_id || r.id} src={r.cover_url} className="w-full h-28 sm:h-36 object-cover" />
                   </div>
                   <div className="p-2 sm:p-3">
                     <div className="text-xs sm:text-sm font-display font-bold truncate" style={{color:'var(--text)'}}>{r.title}</div>
@@ -1509,7 +1536,13 @@ function AddBacklogSearch({ onAdded }) {
           {results.map((g) => (
             <div key={g.id} className="game-card rounded-lg overflow-hidden">
               <div className="card-img-wrap">
-                <img src={g.background_image || FALLBACK} alt="" className="w-full h-20 object-cover" loading="lazy" />
+                <GameImg
+                  key={g.id}
+                  src={g.background_image}
+                  steamAppid={steamIds[g.id] ? parseInt(steamIds[g.id], 10) : null}
+                  alt={g.name}
+                  className="w-full h-20 object-cover"
+                />
               </div>
               <div className="p-2">
                 <div className="text-[11px] font-display font-bold truncate">{g.name}</div>
@@ -1621,7 +1654,13 @@ function AddGameSearch({ onAdded }) {
           {results.map((g) => (
             <div key={g.id} className="game-card rounded-lg overflow-hidden">
               <div className="card-img-wrap">
-                <img src={g.background_image || FALLBACK} alt="" className="w-full h-20 object-cover" loading="lazy" />
+                <GameImg
+                  key={g.id}
+                  src={g.background_image}
+                  steamAppid={steamIds[g.id] ? parseInt(steamIds[g.id], 10) : null}
+                  alt={g.name}
+                  className="w-full h-20 object-cover"
+                />
               </div>
               <div className="p-2">
                 <div className="text-[11px] font-display font-bold truncate">{g.name}</div>
