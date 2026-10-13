@@ -270,12 +270,41 @@ body {
   animation: staggerIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* ============================================================
+   COVER REFRESH — per-card manual image refresh button (↻).
+   Sits over the card art (top-left); the status badge keeps the
+   top-right corner. Spins while fetching, flashes green/red on
+   done/error before settling back to idle.
+   ============================================================ */
+.cover-refresh-btn {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: rgba(4,20,32,0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.cover-refresh-btn:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  box-shadow: 0 0 12px rgba(45,225,194,0.3);
+}
+.cover-refresh-btn.done { border-color: rgba(77,219,163,0.4); color: var(--success); }
+.cover-refresh-btn.error { border-color: rgba(255,90,122,0.4); color: var(--danger); }
+.cover-refresh-btn.spinning svg { animation: coverSpin 0.9s linear infinite; }
+@keyframes coverSpin { to { transform: rotate(360deg); } }
+
 /* ---- respect reduced-motion: keep the content, drop the motion ---- */
 @media (prefers-reduced-motion: reduce) {
   .stagger-in, .fade-in, .palette { animation: none !important; }
   .skeleton::after { animation: none; }
   .np-dot { animation: none; }
   .pulse-glow { animation: none; }
+  .cover-refresh-btn.spinning svg { animation: none; }
   * { transition-duration: 0.01ms !important; }
 }
 

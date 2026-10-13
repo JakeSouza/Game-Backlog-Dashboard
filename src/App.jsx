@@ -94,14 +94,27 @@ function SkeletonHome() {
 // Why this order: portrait art looks best in the card grid; header.jpg is the
 // safe Steam fallback before touching the external RAWG CDN; RAWG's
 // background_image (stored as cover_url) comes last among real sources.
-function GameImg({ src, steamAppid, alt = "", className }) {
+function GameImg({ src, steamAppid, alt = "", className, refreshKey = 0 }) {
+  // Manual image refresh: refreshKey (a timestamp) is appended to every
+  // real-source URL as a cache-busting query param so the browser AND the
+  // wsrv.nl proxy actually re-fetch instead of serving the cached image.
+  const bust = refreshKey ? `?v=${refreshKey}` : "";
   const stages = [
-    steamAppid ? `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppid}/library_600x900.jpg` : null,
-    steamAppid ? `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppid}/header.jpg` : null,
-    proxied(src),
+    steamAppid ? `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppid}/library_600x900.jpg${bust}` : null,
+    steamAppid ? `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppid}/header.jpg${bust}` : null,
+    refreshKey ? `${proxied(src)}&v=${refreshKey}` : proxied(src),
     FALLBACK,
   ].filter(Boolean);
   const [idx, setIdx] = useState(0);
+  // When a manual refresh lands, restart the fallback chain from the top —
+  // a stage that failed before may work now that the URL has changed.
+  const prevKey = useRef(refreshKey);
+  useEffect(() => {
+    if (prevKey.current !== refreshKey) {
+      prevKey.current = refreshKey;
+      setIdx(0);
+    }
+  }, [refreshKey]);
   // Reset to stage 0 when the game changes so a previously-failed stage for
   // one game is not carried over to the next game rendered in the same slot.
   const prevSteamAppid = useRef(steamAppid);
@@ -129,6 +142,45 @@ function GameImg({ src, steamAppid, alt = "", className }) {
         const img = e.currentTarget;
         if (img.naturalWidth > 0 && img.naturalWidth < 40) advance();
       }} />
+  );
+}
+
+// RefreshCoverBtn — ↻ overlay on card art for a manual per-game image
+// refresh. Calls the refresh-cover edge function, which re-fetches art via
+// Steam appdetails (RAWG fallback, and it can even discover a missing
+// steam_appid) and PATCHes the games row. onDone receives the fresh
+// { cover_url, steam_appid } so the page can patch its rows and cache-bust
+// the card's GameImg — the new art paints instantly, no full sync needed.
+function RefreshCoverBtn({ gameId, onDone }) {
+  const [state, setState] = useState("idle"); // idle | busy | done | error
+  async function run(e) {
+    e.stopPropagation();
+    if (state === "busy") return;
+    setState("busy");
+    const { data, error } = await supabase.functions.invoke("refresh-cover", { body: { game_id: gameId } });
+    if (error || data?.error) {
+      setState("error");
+      console.error("refresh-cover failed:", data?.error || error?.message);
+      setTimeout(() => setState("idle"), 2500);
+      return;
+    }
+    setState("done");
+    onDone?.(data);
+    setTimeout(() => setState("idle"), 1800);
+  }
+  return (
+    <button
+      className={`cover-refresh-btn ${state === "busy" ? "spinning" : state}`}
+      title="Refresh cover art (Steam)"
+      aria-label="Refresh cover art"
+      onClick={run}
+    >
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
+        <path d="M21 3v5h-5" />
+      </svg>
+    </button>
   );
 }
 
@@ -1112,6 +1164,7 @@ function Backlog({ version, onSyncDone }) {
   const [status, setStatus] = useState("All");
   const [sort, setSort] = useState("playtime");
   const [rateGame, setRateGame] = useState(null);
+  const [imgRefresh, setImgRefresh] = useState({}); // { gameId: cacheBustKey }
 
   const genres = useMemo(
     () => ["All", ...[...new Set(rows.flatMap((r) => r.game?.genres || []))].sort()],
@@ -1150,6 +1203,20 @@ function Backlog({ version, onSyncDone }) {
     setRateGame(null);
     refetch();
   }, [refetch]);
+
+  // Manual cover refresh: patch the fresh art into local rows and
+  // cache-bust that card's GameImg so the new image paints immediately.
+  const onCoverRefreshed = useCallback((gameId, patch) => {
+    setImgRefresh((p) => ({ ...p, [gameId]: Date.now() }));
+    setRows((prev) => prev.map((r) => r.game?.id !== gameId ? r : {
+      ...r,
+      game: {
+        ...r.game,
+        ...(patch.cover_url ? { cover_url: patch.cover_url } : {}),
+        ...(patch.steam_appid != null ? { steam_appid: patch.steam_appid } : {}),
+      },
+    }));
+  }, []);
 
   // Quick inline star rating (click stars on card) — quarter-star precision
   async function quickRate(gameId, newScore) {
@@ -1206,7 +1273,10 @@ function Backlog({ version, onSyncDone }) {
                    style={{ animationDelay: `${Math.min(i, 14) * 35}ms` }}
                    onClick={() => setRateGame({ game: r.game, rating: r.rating, playtime_forever: r.playtime_forever })}>
                 <div className="card-img-wrap">
-                  <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-28 sm:h-36 object-cover" />
+                  <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} refreshKey={imgRefresh[r.game.id] || 0} className="w-full h-28 sm:h-36 object-cover" />
+                  <div className="absolute top-1.5 left-1.5 z-10">
+                    <RefreshCoverBtn gameId={r.game.id} onDone={(d) => onCoverRefreshed(r.game.id, d)} />
+                  </div>
                   {r.rating?.status && (
                     <div className="absolute top-1.5 right-1.5 z-10">
                       <StatusBadge status={r.rating.status} />
@@ -1699,7 +1769,8 @@ function Wishlist({ version, onSyncDone }) {
   const [searchParams] = useSearchParams();
   const [q, setQ] = useState(searchParams.get("q") || "");
   const [sortBy, setSortBy] = useState("discount");
-  const [removed, setRemoved] = useState({});
+  const [removed, setRemoved] = useState({}); z
+  const [imgRefresh, setImgRefresh] = useState({}); // { gameId: cacheBustKey }
 
   const filtered = useMemo(() => {
     let r = rows.filter((x) => x.game && !removed[x.game.id]);
@@ -1734,6 +1805,14 @@ function Wishlist({ version, onSyncDone }) {
     }
   }
 
+  // Manual cover refresh: cache-bust the card's GameImg, then refetch the
+  // wishlist rows so the PATCHed cover_url / steam_appid from the edge
+  // function shows up.
+  const onCoverRefreshed = useCallback((gameId) => {
+    setImgRefresh((p) => ({ ...p, [gameId]: Date.now() }));
+    setWlVersion((v) => v + 1);
+  }, []);
+
   return (
     <Layout onSyncDone={onSyncDone}>
       <div className="fade-in">
@@ -1765,7 +1844,10 @@ function Wishlist({ version, onSyncDone }) {
               <div key={r.game.id} className="game-card rounded-lg overflow-hidden stagger-in"
                    style={{ animationDelay: `${Math.min(i, 14) * 35}ms` }}>
                 <div className="card-img-wrap">
-                  <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} className="w-full h-28 sm:h-36 object-cover" />
+                  <GameImg src={r.game.cover_url} steamAppid={r.game.steam_appid} refreshKey={imgRefresh[r.game.id] || 0} className="w-full h-28 sm:h-36 object-cover" />
+                  <div className="absolute top-1.5 left-1.5 z-10">
+                    <RefreshCoverBtn gameId={r.game.id} onDone={(d) => onCoverRefreshed(r.game.id, d)} />
+                  </div>
                   <div className="absolute top-1.5 right-1.5 z-10">
                     <StatusBadge status="wishlist" />
                   </div>
