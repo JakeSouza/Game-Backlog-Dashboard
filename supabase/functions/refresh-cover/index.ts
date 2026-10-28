@@ -166,7 +166,7 @@ Deno.serve(async (req) => {
       }
       if (rawgId) {
         await sleep(250);
-        const detail = await rawgDetail(rawgId);s
+        const detail = await rawgDetail(rawgId);
         if (detail?.appid && detail.appid !== game.steam_appid) {
           patch.steam_appid = detail.appid;
           await sleep(200);

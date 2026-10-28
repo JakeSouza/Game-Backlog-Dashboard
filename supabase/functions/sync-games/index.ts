@@ -434,7 +434,9 @@ Deno.serve(async (req) => {
     const existing: any[] = [];
     for (let i = 0; i < appids.length; i += 50) {
       const batch = appids.slice(i, i + 50).join(",");
-      const r = await fetch(REST(`games?steam_appid=in.(${batch})&select=id,steam_appid,rawg_id,cover_url`), { headers: h() });
+      // `title` is required below: the backloggd-only pass dedupes against
+      // these rows by normalized title, so it must be selected here.
+      const r = await fetch(REST(`games?steam_appid=in.(${batch})&select=id,steam_appid,rawg_id,cover_url,title`), { headers: h() });
       if (r.ok) existing.push(...(await r.json()));
     }
     const known = new Map(existing.map((g) => [String(g.steam_appid), g]));
@@ -576,20 +578,14 @@ Deno.serve(async (req) => {
       wishlistStatus = wlResult.status;
       wishlistError = wlResult.error;
       for (const w of wlResult.items) {
-        // create games row if not exists (by steam_appid)
-        let gid: string | undefined;
-        const ex = await fetch(REST(`games?steam_appid=eq.${w.appid}&select=id`), { headers: h() });
-        if (ex.ok) {
-          const rows = await ex.json();
-          if (rows.length) gid = rows[0].id;
-        }
-        if (!gid) {
-          const cr = await fetch(REST("games?on_conflict=steam_appid"), {
-            method: "POST", headers: h(UPSERT),
-            body: JSON.stringify({ steam_appid: w.appid, title: w.title, updated_at: now() }),
-          });
-          if (cr.ok) gid = (await cr.json())[0]?.id;
-        }
+        // Single upsert-by-steam_appid creates the games row if it's missing
+        // and returns the id either way — one HTTP call instead of the old
+        // select-then-insert pair (halves the requests for a big wishlist).
+        const cr = await fetch(REST("games?on_conflict=steam_appid"), {
+          method: "POST", headers: h(UPSERT),
+          body: JSON.stringify({ steam_appid: w.appid, title: w.title, updated_at: now() }),
+        });
+        const gid = cr.ok ? (await cr.json())[0]?.id : undefined;
         if (gid) {
           await fetch(REST("ratings?on_conflict=game_id,user_id"), {
             method: "POST", headers: h(UPSERT),
@@ -622,3 +618,4 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: String(e?.message || e) }, 500);
   }
 });
+

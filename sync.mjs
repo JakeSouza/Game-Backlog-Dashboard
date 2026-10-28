@@ -1,11 +1,15 @@
 // ============================================================
-// sync.mjs  — runs in GitHub Actions (Node 20+, native fetch).
-// Pulls data from Steam, RAWG, and backloggd, then upserts into
-// Supabase using the SERVICE ROLE key (bypasses RLS).
+// sync.mjs  — OPTIONAL local backfill, run ad hoc in Node 20+.
+// Not used by the deployed site — the "Sync now" button calls the
+// sync-games Supabase Edge Function instead. This script exists for
+// a large first-time backfill (no edge-function timeout) and for
+// debugging the sync pipeline locally.
 //
-// Secrets (repo Settings > Secrets and variables > Actions):
-//   STEAM_API_KEY, STEAM_ID, RAWG_API_KEY,
-//   BACKLOGGD_USERNAME, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+// Ad-hoc run (installs deps without touching package.json):
+//   npm install --no-save @supabase/supabase-js cheerio
+//   STEAM_API_KEY=... STEAM_ID=... RAWG_API_KEY=... \
+//   BACKLOGGD_USERNAME=... SUPABASE_URL=... \
+//   SUPABASE_SERVICE_ROLE_KEY=... node sync.mjs
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
@@ -90,7 +94,6 @@ const STATUS_PATHS = {
   wishlist: "wishlist",
   dropped:  "dropped",
 };
-const STATUS_RATING = { played: null, playing: null, backlog: null, wishlist: null, dropped: null };
 
 async function scrapeBackloggd() {
   const out = []; // { title, status, score }
