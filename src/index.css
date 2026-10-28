@@ -1,3 +1,8 @@
+/* Google Fonts must be imported before any other rules (CSS spec: @import
+   only takes effect at the top of the stylesheet) — the tailwind directives
+   below expand into real rules, so this line has to come first. */
+@import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -11,7 +16,6 @@
    need zero JSX changes.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 :root {
   --bg: #041420;
@@ -712,3 +716,4 @@ body {
 }
 @keyframes viewFadeOut { to { opacity: 0; transform: scale(0.99) translateY(4px); } }
 @keyframes viewFadeIn { from { opacity: 0; transform: scale(1.008) translateY(-4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+
